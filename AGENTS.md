@@ -48,7 +48,10 @@ exits without touching the daemon.
 ## When behavior changes
 
 Update in the same commit: `docs/design.md` for a new key, station, hold,
-socket message or rule; the README for anything a new user meets.
+socket message or rule; the README for anything a new user meets; and
+`docs/assets/hero.py` when the lamp, a hack or the wear numbers it shows
+change, then run `python3 docs/assets/hero.py` to rewrite `hero.svg` (never
+edit the SVG by hand).
 
 Commits are conventional, scoped by area: `core`, `state`, `holds`, `hacks`,
 `wear`, `saver`, `daemon`, `cli`, `docs`, `ci`.
