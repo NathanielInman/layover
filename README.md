@@ -14,6 +14,14 @@
   and a lamp in your bar that says why the screen did what it did.
 </p>
 
+<p align="center">
+  <a href="https://github.com/NathanielInman/layover/actions/workflows/ci.yml"><img src="https://github.com/NathanielInman/layover/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/status-early%20(0.1)-ebcb8b" alt="Early, version 0.1">
+  <img src="https://img.shields.io/badge/burn--in-tested%20in%20CI-88c0d0" alt="Burn-in tested in CI">
+  <img src="https://img.shields.io/badge/Arch%20%2B%20Hyprland%20first-Linux%20%C2%B7%20Wayland-a3be8c" alt="Arch and Hyprland first; Linux with Wayland">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-b48ead" alt="MIT license"></a>
+</p>
+
 A layover is the rest a train crew takes between runs. Layover is what your
 desk does between yours. [Switchyard](https://github.com/NathanielInman/switchyard)
 dispatches your work, [Roundhouse](https://github.com/NathanielInman/roundhouse)
