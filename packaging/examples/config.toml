@@ -115,3 +115,22 @@ gpu = "auto"
 # Hacks in the rotation, by id (`layover hacks` lists them). Empty means
 # every hack.
 hacks = []
+
+[bar]
+# The layer-shell namespace of your bar's surface, so the drawer can open
+# from the clicked moon.
+namespace = "waybar"
+
+[drawer]
+# Panel width in logical pixels, its tallest as a share of the monitor, and
+# the space between the bar and the panel.
+width = 420.0
+max_height = 0.85
+gap = 8.0
+
+[theme]
+# "waybar" takes the drawer's font and colors from your bar's style.css;
+# "none" keeps the built-in look. Optional overrides:
+#   accent = "#88c0d0"
+#   font = "JetBrains Mono"
+from = "waybar"

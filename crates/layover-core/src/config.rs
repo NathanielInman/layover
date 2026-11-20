@@ -19,6 +19,9 @@ pub struct Config {
     pub care: Care,
     pub power: Power,
     pub saver: Saver,
+    pub bar: Bar,
+    pub drawer: Drawer,
+    pub theme: Theme,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -202,6 +205,55 @@ pub struct Saver {
     pub hacks: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Bar {
+    /// The layer-shell namespace of the bar surface, used to find its edge
+    /// when the drawer opens from the clicked icon.
+    pub namespace: String,
+}
+
+impl Default for Bar {
+    fn default() -> Self {
+        Bar { namespace: "waybar".into() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Drawer {
+    /// Panel width in logical pixels.
+    pub width: f64,
+    /// The tallest the panel gets, as a share of the monitor's height.
+    pub max_height: f64,
+    /// Space between the bar and the panel.
+    pub gap: f64,
+}
+
+impl Default for Drawer {
+    fn default() -> Self {
+        Drawer { width: 420.0, max_height: 0.85, gap: 8.0 }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Theme {
+    /// `waybar` takes the font and colors from the bar's style.css; `none`
+    /// keeps the built-in look.
+    pub from: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme { from: "waybar".into(), accent: None, font: None }
+    }
+}
+
 /// What a loosened value puts at risk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -306,6 +358,19 @@ impl Config {
         }
         if !(p.render_scale >= 0.1 && p.render_scale <= 1.0) {
             bail!("power.render_scale is {}; it must be between 0.1 and 1", p.render_scale);
+        }
+        let d = &self.drawer;
+        if !(240.0..=1600.0).contains(&d.width) {
+            bail!("drawer.width is {}; it must be between 240 and 1600", d.width);
+        }
+        if !(d.max_height > 0.2 && d.max_height <= 1.0) {
+            bail!("drawer.max_height is {}; it must be above 0.2 and at most 1", d.max_height);
+        }
+        if !(0.0..=64.0).contains(&d.gap) {
+            bail!("drawer.gap is {}; it must be between 0 and 64", d.gap);
+        }
+        if !matches!(self.theme.from.as_str(), "waybar" | "none") {
+            bail!("theme.from is \"{}\"; use \"waybar\" or \"none\"", self.theme.from);
         }
         Ok(())
     }

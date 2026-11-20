@@ -46,6 +46,25 @@ pub fn log_file() -> PathBuf {
     state_dir().join("daemon.log")
 }
 
+pub fn board_log() -> PathBuf {
+    state_dir().join("board.log")
+}
+
+/// The wear test's last results, written by `layover wear`.
+pub fn wear_cache() -> PathBuf {
+    state_dir().join("wear.json")
+}
+
+/// The drawer's own stylesheet, layered over the bar's look.
+pub fn style_file() -> PathBuf {
+    config_dir().join("style.css")
+}
+
+/// `$XDG_CONFIG_HOME/waybar`, else `~/.config/waybar`.
+pub fn waybar_dir() -> PathBuf {
+    env_dir("XDG_CONFIG_HOME").unwrap_or_else(|| home().join(".config")).join("waybar")
+}
+
 fn uid() -> String {
     std::env::var("UID").unwrap_or_else(|_| "user".into())
 }

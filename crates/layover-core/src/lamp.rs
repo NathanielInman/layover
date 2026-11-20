@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// text is empty, so every state but `off` prints it; the class colors it.
 pub const MOON: &str = "\u{f0594}";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lamp {
     pub text: String,
     pub alt: String,
