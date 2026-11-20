@@ -125,7 +125,7 @@ measures:
 | Metric | Budget |
 | --- | --- |
 | Average picture level | `care.max_average` |
-| Longest lit dwell: a pixel above 25% that changed by less than 3% | `care.max_dwell` |
+| Longest lit dwell: a pixel above 15% that changed by less than 3% in a second | `care.max_dwell` |
 | Hottest area: the highest per-pixel average level | `care.max_hot_spot` |
 | Channel share: each of red, green and blue as a share of all light | 40% |
 | Peak drive | `care.max_drive` |

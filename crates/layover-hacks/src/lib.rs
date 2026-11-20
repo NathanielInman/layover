@@ -2,6 +2,7 @@
 
 pub mod gpu;
 pub mod renderer;
+pub mod wear;
 
 /// A hack: a WGSL `hack(p, t)` function and what the renderer needs to know
 /// about it.
