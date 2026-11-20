@@ -165,9 +165,12 @@ saver now) and `{"cmd":"stop"}`. Replies are a lamp
 
 | Class | Shown | When |
 | --- | --- | --- |
-| `armed` | dim dot | waiting, nothing held |
-| `held` | amber dot | a station was reached and held, or a manual hold runs |
-| `saver` | frost dot | a hack is running |
-| `dark` | dim dot | screens are off |
-| `loose` | amber ring | config is looser than shipped (in the tooltip too) |
+| `armed` | dim moon | waiting, nothing held |
+| `held` | amber moon | a station was reached and held, or a manual hold runs |
+| `saver` | frost moon | a hack is running |
+| `dark` | dim moon | screens are off |
+| `loose` | amber moon | config is looser than shipped (in the tooltip too) |
 | `off` | nothing | the daemon is not running |
+
+The text is the Nerd Font moon (md-weather-night, U+F0594) in every state
+but `off`: waybar hides a custom module whose text is empty.

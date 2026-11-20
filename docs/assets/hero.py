@@ -38,7 +38,7 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
     "passing rule one: Night Mail, Frost Aurora, Signal Lamps and Starfield with their average level, longest "
-    "lit dwell and hottest area. Layover's lamp in the bar is a dim dot. The desk goes quiet, the clock jumps "
+    "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
     "windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll "
     "past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of "
@@ -311,7 +311,7 @@ add(g_speaker(x + 4 + 8 + 7, CY, FROST))
 add(tx(x + 4 + 8 + GW + CW, MID, "35%", BAR_SIZE, FROST))
 
 # The lamps: Roundhouse's green dot, Switchyard's board, Waybill's ring,
-# Layover's dot (dim when armed, amber when held), the do-not-disturb bell.
+# Layover's moon (dim when armed, amber when held), the do-not-disturb bell.
 LAMP = 16 + GW
 lamps_w = 4 + 5 * LAMP + 4
 lx = x - 6 - lamps_w
@@ -323,9 +323,17 @@ for dy in (-5, 0, 5):
     add(f'<circle cx="{cx[1]}" cy="{CY + dy}" r="1.8" fill="{FROST}"/>')
 add(f'<circle cx="{cx[2]}" cy="{CY}" r="5.5" fill="none" stroke="{BAR_DIM}" stroke-width="1.6"/>')
 LAYOVER_X = cx[3]
-add(f'<circle cx="{LAYOVER_X}" cy="{CY}" r="5.5" fill="{BAR_DIM}"/>')
+
+
+def g_moon(cx, cy, c):
+    """The lamp's glyph, md-weather-night: a crescent."""
+    return (f'<path d="M{cx + 1.5},{cy - 7} A7,7 0 1 0 {cx + 6.5},{cy + 3.2} A5.6,5.6 0 1 1 {cx + 1.5},{cy - 7} Z" fill="{c}"/>')
+
+
+add(g_moon(LAYOVER_X, CY, BAR_DIM))
 group(fade([(HOLD + 0.35, RELEASE + 0.35)], 0.01, 0.01), False)
-add(f'<circle cx="{LAYOVER_X}" cy="{CY}" r="5.5" fill="{AMBER}"/>')
+add(f'<rect x="{LAYOVER_X - 9}" y="{CY - 10}" width="18" height="20" fill="{PILL}"/>')
+add(g_moon(LAYOVER_X, CY, AMBER))
 add("</g>")
 add(g_bell(cx[4], CY, BAR_DIM))
 

@@ -2,6 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// The lamp's glyph: Nerd Font md-weather-night. Waybar hides a module whose
+/// text is empty, so every state but `off` prints it; the class colors it.
+pub const MOON: &str = "\u{f0594}";
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lamp {
     pub text: String,
@@ -12,7 +16,8 @@ pub struct Lamp {
 
 impl Lamp {
     pub fn new(class: &str, tooltip: String) -> Lamp {
-        Lamp { text: String::new(), alt: class.into(), class: class.into(), tooltip }
+        let text = if class == "off" { String::new() } else { MOON.to_string() };
+        Lamp { text, alt: class.into(), class: class.into(), tooltip }
     }
 
     /// The lamp when no daemon answers.

@@ -44,6 +44,8 @@ mod tests {
     #[test]
     fn replies_round_trip() {
         let lamp = Reply::Lamp(Lamp::new("armed", "Saver after 15m".into()));
+        assert!(matches!(&lamp, Reply::Lamp(l) if l.text == crate::lamp::MOON));
+        assert!(Lamp::off().text.is_empty(), "waybar hides the lamp while the daemon is off");
         let line = serde_json::to_string(&lamp).unwrap();
         assert_eq!(serde_json::from_str::<Reply>(&line).unwrap(), lamp);
         let err = Reply::Error { error: "no".into() };

@@ -5,7 +5,7 @@
 <h1 align="center">Layover</h1>
 
 <p align="center">
-  <img src="docs/assets/hero.svg" width="100%" alt="A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack passing rule one: Night Mail, Frost Aurora, Signal Lamps and Starfield with their average level, longest lit dwell and hottest area. Layover&#x27;s lamp in the bar is a dim dot. The desk goes quiet, the clock jumps from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of focus. The mouse moves and the saver is gone at once. In the terminal layover hold 1h turns the lamp amber, its tooltip says held by you for 1h more, and layover release turns it dim again.">
+  <img src="docs/assets/hero.svg" width="100%" alt="A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack passing rule one: Night Mail, Frost Aurora, Signal Lamps and Starfield with their average level, longest lit dwell and hottest area. Layover&#x27;s lamp in the bar is a dim moon. The desk goes quiet, the clock jumps from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of focus. The mouse moves and the saver is gone at once. In the terminal layover hold 1h turns the lamp amber, its tooltip says held by you for 1h more, and layover release turns it dim again.">
 </p>
 
 <p align="center">
@@ -103,10 +103,10 @@ and `packaging/examples/waybar-style.css`.
 
 | Lamp | Means |
 | --- | --- |
-| dim dot | armed, waiting |
-| amber dot | held: the tooltip says by what |
-| frost dot | a hack is running |
-| amber ring | your config is looser than shipped |
+| dim moon | armed, waiting |
+| amber moon | held (the tooltip says by what), or your config is looser than shipped |
+| frost moon | a hack is running |
+| none | the daemon isn't running |
 
 Click it to start the saver now, right-click to hold for an hour,
 middle-click to release.

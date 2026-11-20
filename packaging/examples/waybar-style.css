@@ -1,5 +1,6 @@
 /* Waybar styles for the Layover lamp, from the README. Merge into
-   ~/.config/waybar/style.css and adjust the colors. */
+   ~/.config/waybar/style.css and adjust the colors. The lamp is a Nerd Font
+   moon; it hides itself while the daemon is off. */
 #custom-layover { color: #616e88; }
 #custom-layover.held,
 #custom-layover.loose { color: #ebcb8b; }
