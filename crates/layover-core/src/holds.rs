@@ -13,6 +13,10 @@ pub struct HoldSnapshot {
     pub audio: bool,
     /// An app is recording from a microphone.
     pub mic: bool,
+    /// Logbook is recording or dictating (the line).
+    pub on_air: bool,
+    /// Timetable says a meeting is soon or starting (the line).
+    pub meeting_soon: bool,
 }
 
 #[derive(Deserialize)]

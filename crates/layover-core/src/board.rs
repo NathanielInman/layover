@@ -26,6 +26,9 @@ pub struct Snapshot {
     pub locked: bool,
     /// The hack on screen while the saver runs.
     pub hack: Option<String>,
+    /// Why the saver draws in cheap mode, when it does.
+    #[serde(default)]
+    pub cheap: Option<String>,
     pub hacks: Vec<HackView>,
     /// Newest first.
     pub history: Vec<HistoryView>,

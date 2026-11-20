@@ -51,6 +51,8 @@ pub enum Event {
     Now,
     /// `layover stop`: stop the saver.
     Stop,
+    /// The line changed whether the saver should draw cheap, and why.
+    Cheap { why: Option<String> },
     /// Time passed; the daemon sends one every few seconds.
     Tick,
 }
@@ -97,6 +99,8 @@ struct Rules {
     audio: AudioHold,
     mic: bool,
     inhibitors: bool,
+    hold_on_air: bool,
+    hold_meeting: bool,
     locked_dark: Option<u64>,
     saver_span: Span,
     dark_span: Span,
@@ -124,6 +128,8 @@ pub struct Model {
     /// Set while a retry re-runs held stations: they go ahead because the
     /// hold ended, not because of the idle timeout.
     retrying: bool,
+    /// Why the saver draws in cheap mode, while it does.
+    cheap: Option<String>,
 }
 
 impl Model {
@@ -134,6 +140,8 @@ impl Model {
                 audio: cfg.holds.audio,
                 mic: cfg.holds.mic,
                 inhibitors: cfg.holds.inhibitors,
+                hold_on_air: cfg.feeds.hold_on_air,
+                hold_meeting: cfg.feeds.hold_meeting,
                 locked_dark: match cfg.line.locked_dark {
                     Span::After(d) => Some(d.as_secs()),
                     Span::Off => None,
@@ -156,6 +164,7 @@ impl Model {
             history: VecDeque::new(),
             noted_hold: None,
             retrying: false,
+            cheap: None,
         }
     }
 
@@ -196,6 +205,7 @@ impl Model {
             manual_hold: self.manual_left().is_some(),
             locked: self.locked,
             hack: if self.phase == Phase::Saver { hack } else { None },
+            cheap: self.cheap.clone(),
             hacks,
             history: self
                 .history
@@ -213,6 +223,11 @@ impl Model {
 
     pub fn phase(&self) -> Phase {
         self.phase
+    }
+
+    /// Why the saver should draw in cheap mode, if it should.
+    pub fn cheap(&self) -> Option<&str> {
+        self.cheap.as_deref()
     }
 
     pub fn locked(&self) -> bool {
@@ -296,6 +311,15 @@ impl Model {
                     self.phase = Phase::Active;
                     out.push(Effect::StopSaver);
                     self.note("Saver stopped", "you asked");
+                }
+            }
+            Event::Cheap { why } => {
+                if why != self.cheap {
+                    match &why {
+                        Some(w) => self.note("Cheap mode", w.clone()),
+                        None => self.note("Full rate", "the line is quiet again"),
+                    }
+                    self.cheap = why;
                 }
             }
             Event::Tick => {
@@ -441,6 +465,12 @@ impl Model {
         if self.rules.mic && h.mic {
             return Some("a microphone is recording".into());
         }
+        if self.rules.hold_on_air && h.on_air {
+            return Some("Logbook is on air".into());
+        }
+        if self.rules.hold_meeting && h.meeting_soon && station == Station::Saver {
+            return Some("a meeting is about to start (Timetable)".into());
+        }
         let audio_holds = match self.rules.audio {
             AudioHold::All => true,
             AudioHold::Dark => matches!(station, Station::Dark | Station::LockedDark),
@@ -487,6 +517,9 @@ impl Model {
                 }
             }
         };
+        if let Some(why) = &self.cheap {
+            lines.push(format!("Cheap mode: {why}, so the saver draws at half rate."));
+        }
         let class = if !self.rules.loose.is_empty() {
             lines.push(format!(
                 "Looser than shipped: {}. `layover check` says what each risks.",
@@ -729,6 +762,45 @@ mod tests {
         assert_eq!(s.history[0].time, "t9");
         assert!(s.manual_hold);
         assert_eq!(s.stations.len(), 4);
+    }
+
+    #[test]
+    fn logbook_on_air_holds_everything() {
+        let air = HoldSnapshot { on_air: true, ..Default::default() };
+        let mut m = model("");
+        assert_eq!(reach(&mut m, 900, Station::Saver, air.clone()), [Retry { after: 60 }]);
+        assert!(m.lamp().tooltip.contains("Logbook is on air"), "{}", m.lamp().tooltip);
+        assert_eq!(reach(&mut m, 3600, Station::Dark, air), [Retry { after: 60 }]);
+        let mut off = model("[feeds]\nhold_on_air = false");
+        let air = HoldSnapshot { on_air: true, ..Default::default() };
+        assert_eq!(reach(&mut off, 900, Station::Saver, air), [StartSaver]);
+    }
+
+    #[test]
+    fn a_meeting_soon_holds_only_the_saver() {
+        let soon = HoldSnapshot { meeting_soon: true, ..Default::default() };
+        let mut m = model("");
+        assert_eq!(reach(&mut m, 900, Station::Saver, soon.clone()), [Retry { after: 60 }]);
+        assert!(m.lamp().tooltip.contains("meeting"), "{}", m.lamp().tooltip);
+        assert_eq!(reach(&mut m, 3600, Station::Dark, soon), [Lock, ScreensOff]);
+    }
+
+    #[test]
+    fn cheap_mode_is_noted_once_and_shown() {
+        let mut m = model("");
+        let why = Some("a heavy build runs".to_string());
+        assert!(m.step(5, Event::Cheap { why: why.clone() }).is_empty());
+        m.step(6, Event::Cheap { why: why.clone() });
+        assert_eq!(m.cheap(), Some("a heavy build runs"));
+        assert!(
+            m.lamp().tooltip.contains("Cheap mode: a heavy build runs"),
+            "{}",
+            m.lamp().tooltip
+        );
+        m.step(9, Event::Cheap { why: None });
+        let told: Vec<_> = m.history().map(|e| e.what.as_str()).collect();
+        assert_eq!(told, ["Cheap mode", "Full rate"]);
+        assert_eq!(m.snapshot(&|_| String::new(), None, vec![]).cheap, None);
     }
 
     #[test]
