@@ -69,17 +69,17 @@ When a station is reached, the daemon checks what holds it:
 | Hold | Source | Holds |
 | --- | --- | --- |
 | Inhibitor | Hyprland clients with `inhibitingIdle`, minus `holds.ignore` | saver, lock, dark |
-| Microphone | an ALSA capture stream in state `RUNNING` | saver, lock, dark |
-| Audio | an ALSA playback stream in state `RUNNING` | `holds.audio`: `"dark"` (default), `"all"` or `"off"` |
+| Microphone | an uncorked `pactl` source output that is not a level meter | saver, lock, dark |
+| Audio | an uncorked, unmuted `pactl` sink input | `holds.audio`: `"dark"` (default), `"all"` or `"off"` |
 | Manual | `layover hold <duration>` | saver, lock, dark |
 
 Audio holds only the dark by default: a static desktop while music plays is
 the worst case for a panel, and a hack under the care rules is not. A held
 station is checked again every 60 seconds while the desk stays idle.
 
-ALSA status comes from `/proc/asound/card*/pcm*/sub*/status`. PipeWire
-suspends idle devices, so `RUNNING` means sound is going to hardware. Bluetooth
-audio does not show there; that is a known gap.
+Streams come from `pactl -f json list sink-inputs` and `source-outputs`, the
+view sway-audio-idle-inhibit uses, run only when a station is reached. ALSA's
+status can't tell a device PipeWire holds open from one that is recording.
 
 ### The state machine
 
@@ -136,6 +136,9 @@ your config and writes a heat map PNG.
 
 ## Config
 
+`[bar]`, `[drawer]` and `[theme]` set where the drawer opens from, its size
+and its look; the rest is the idle line, holds, care, power and the saver.
+
 `~/.config/layover/layover.toml` (`$LAYOVER_CONFIG_DIR` overrides the
 directory). `packaging/examples/config.toml` is the shipped file with every
 key, its reason and its warning; a test checks it parses to the built-in
@@ -150,16 +153,67 @@ defaults.
   and stops it with SIGTERM; it also exits on its own on any key, button or
   pointer movement past a few pixels.
 - `layover bar`: the waybar module, one JSON line per lamp change.
-- Logs go to `$XDG_STATE_HOME/layover/daemon.log` (`$LAYOVER_STATE_DIR`
-  overrides).
+- `layover-board`: the drawer. The daemon starts it, from next to its own
+  binary, the first time one is asked for; it stays resident while hidden.
+- Logs go to `$XDG_STATE_HOME/layover/daemon.log` and `board.log`
+  (`$LAYOVER_STATE_DIR` overrides). `layover wear` keeps its last results in
+  `wear.json` beside them.
+
+| Crate | Role |
+| --- | --- |
+| `bar-anchor` | Anchoring (Hyprland, sway, niri) and panel placement. A copy of Tannoy's; its `Anchor` JSON stays identical to Roundhouse's, Switchyard's and Tannoy's. |
+| `layover-core` | Config, durations, holds, the state machine and its history, the lamp, the drawer's snapshot, the socket protocol, the waybar reader and the wear cache. No Wayland, no GPU, no UI. |
+| `layover-hacks` | The renderer, the hacks, the rotation schedule and the wear test. |
+| `layover` | The daemon, the saver, the CLI and the waybar module. |
+| `layover-board` | The drawer: GTK4 on `gtk4-layer-shell`, overlay layer, namespace `layover`, keyboard exclusive while open. |
 
 ### Socket protocol
 
 One JSON object per line. Requests: `{"cmd":"status"}`, `{"cmd":"watch"}`
 (the reply stream stays open and sends a lamp on every change),
 `{"cmd":"hold","secs":N}`, `{"cmd":"release"}`, `{"cmd":"now"}` (start the
-saver now) and `{"cmd":"stop"}`. Replies are a lamp
-`{"text","alt","class","tooltip"}` or `{"error"}`.
+saver now), `{"cmd":"stop"}`, `{"cmd":"toggle","anchor":A}` and
+`{"cmd":"show","anchor":A}` (open the drawer from the bar, `A` being
+bar-anchor's `Anchor` or absent to center it), and `{"cmd":"board"}`. Replies
+are a lamp `{"text","alt","class","tooltip"}` or `{"error"}`.
+
+`board` keeps the connection open for the drawer: a snapshot first, any
+show waiting for a drawer that was starting, then a line per event:
+`{"event":"snapshot","snapshot":{...}}` on every change, and
+`{"event":"toggle"|"show","anchor":A}` or `{"event":"hide"}`. The snapshot
+(`layover_core::board::Snapshot`) carries the lamp, the state and its
+headline, the reason, the timings, the stations of the rail, the loosened
+values with their reasons, whether a manual hold runs, the hack on screen
+and the history, every string already worded.
+
+## The drawer
+
+`layover toggle` asks the compositor where the click was while the cursor
+is still on the moon and sends the anchor; the drawer covers the monitor
+with a transparent overlay surface, places the panel next to the bar at the
+click (`bar_anchor::place`) and springs it open from there. A click outside
+the panel or Escape closes it. Under sway and niri the anchor comes from
+waybar's config, as in Tannoy; elsewhere, or with `--center`, it opens
+centered. With `theme.from = "waybar"` it takes the bar's font and colors,
+then `~/.config/layover/style.css` on top.
+
+Three tabs:
+
+- **Now**: the state in large type in its color (dim armed, amber held,
+  frost saver), the reason, the idle line as configured (saver, lock, screens
+  off, lock screen off; an off station says off), Start saver now and Hold 1h
+  or Release, and every value looser than shipped with its reason.
+- **Hacks**: each hack, whether it is in the rotation and whether it is on
+  screen, and its wear numbers from `wear.json` with passes or fails. Measure
+  runs `layover wear` in the background; Preview closes the drawer and runs
+  `layover saver --hack <id> --for 20s`.
+- **History**: the last 50 transitions, newest first, each with its local
+  time and why: a station reached or held (once per hold, not every retry),
+  the saver started, dismissed or ended, locked, screens off and on, holds
+  and releases.
+
+Keys: `1` to `3` pick a tab, `n` starts the saver, `h` holds for an hour,
+`r` releases, Escape closes.
 
 ### The lamp
 

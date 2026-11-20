@@ -8,13 +8,22 @@ the care pass, the wear test or a default.
 
 - `layover-core`: config and its defaults, durations, the loosened-value
   check, the state machine (`state.rs`: events in, effects out), holds
-  parsing (ALSA status, Hyprland clients), the lamp and the socket protocol.
+  parsing (pactl streams, Hyprland clients), the lamp, the drawer's
+  snapshot, the socket protocol, the waybar reader and the wear cache.
   No Wayland, no GPU.
 - `layover-hacks`: the renderer (hack pass, limiter, care pass), the hacks
   as WGSL in `src/hacks/`, and the wear test. No Wayland.
 - `layover`: one binary. The daemon (`daemon.rs`, `wayland.rs`), the saver
   (`saver.rs`: overlay surfaces through smithay-client-toolkit), the CLI and
   the waybar module.
+- `bar-anchor`: anchoring (Hyprland, sway, niri) and panel placement, no
+  GTK. A copy of Tannoy's; its `Anchor` JSON must stay identical to the
+  siblings'.
+- `layover-board`: the GTK4 layer-shell drawer. `anim.rs` and `stage.rs`
+  came from Tannoy's board, `theme.rs` reads the bar's look. Check its
+  layout headless with `GDK_BACKEND=broadway layover-board --shot out.png
+  snapshot.json [now|hacks|history]` (a snapshot is the `snapshot` field of
+  a `{"cmd":"board"}` line).
 
 ## Build and test
 
@@ -54,4 +63,4 @@ change, then run `python3 docs/assets/hero.py` to rewrite `hero.svg` (never
 edit the SVG by hand).
 
 Commits are conventional, scoped by area: `core`, `state`, `holds`, `hacks`,
-`wear`, `saver`, `daemon`, `cli`, `docs`, `ci`.
+`wear`, `saver`, `daemon`, `cli`, `anchor`, `board`, `docs`, `ci`.

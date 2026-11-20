@@ -79,11 +79,11 @@ Code's) are ignored.
 
 ```sh
 cargo build --release --locked
-install -Dm755 target/release/layover ~/.local/bin/layover
+install -Dm755 target/release/layover target/release/layover-board ~/.local/bin/
 ```
 
-It needs a Vulkan driver, `pactl` (for the audio and microphone holds) and a
-compositor with `ext-idle-notify-v1`, `wlr-layer-shell` and
+It needs a Vulkan driver, `pactl` (for the audio and microphone holds),
+GTK4 and `gtk4-layer-shell` (for the drawer) and a compositor with `ext-idle-notify-v1`, `wlr-layer-shell` and
 `wlr-output-power-management`.
 
 Start the daemon with your session, in place of hypridle. With systemd,
@@ -131,14 +131,25 @@ bind, press Enter on the empty field and touch the key when the cue shows.
 | frost moon | a hack is running |
 | none | the daemon isn't running |
 
-Click it to start the saver now, right-click to hold for an hour,
-middle-click to release.
+Click it and the drawer springs out of the moon; middle-click starts the
+saver now, right-click holds for an hour.
+
+## The drawer
+
+Three tabs. **Now** shows the state and why, the idle line as you configured
+it, Start saver now and Hold or Release, and anything looser than shipped
+with what it risks. **Hacks** shows every hack with its wear numbers from
+the last `layover wear`, whether it is in the rotation, a Measure button and
+a 20 second Preview of each. **History** shows the last 50 things the line
+did, with the time and why. Keys: `1` to `3`, `n` start, `h` hold, `r`
+release, Escape. It takes your waybar's font and colors.
 
 ## Commands
 
 ```
 layover daemon                 run the idle line
 layover bar                    the waybar module
+layover toggle [--center]      open or close the drawer from the clicked moon
 layover status                 what the idle line is doing, and why
 layover now | stop             start or stop the saver
 layover hold 1h | release      hold the line, or end the hold

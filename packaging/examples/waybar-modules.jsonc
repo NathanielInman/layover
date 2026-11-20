@@ -3,8 +3,8 @@
 "custom/layover": {
   "exec": "~/.local/bin/layover bar",
   "return-type": "json",
-  "on-click": "~/.local/bin/layover now",
+  "on-click": "~/.local/bin/layover toggle",
+  "on-click-middle": "~/.local/bin/layover now",
   "on-click-right": "~/.local/bin/layover hold 1h",
-  "on-click-middle": "~/.local/bin/layover release",
   "tooltip": true
 }
