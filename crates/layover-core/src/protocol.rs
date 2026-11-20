@@ -28,6 +28,9 @@ pub enum Request {
     },
     /// The drawer subscribes: snapshots and open/close events, one per line.
     Board,
+    /// The saver subscribes: the Departure Board's rows and cheap mode, as a
+    /// `feeds::LineUpdate` per line, now and on every change.
+    Line,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

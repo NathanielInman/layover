@@ -1,6 +1,7 @@
 //! `layover`: the daemon, the saver, the waybar module and the CLI.
 
 mod daemon;
+mod feeds;
 mod log;
 mod saver;
 mod wayland;

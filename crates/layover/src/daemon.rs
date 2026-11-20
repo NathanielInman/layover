@@ -8,11 +8,13 @@ use crate::wayland::{self, Screens};
 use anyhow::{Context, Result, bail};
 use layover_core::board::{BoardEvent, HackView};
 use layover_core::config::Config;
+use layover_core::feeds::{self, Desk, Feed, LampLine, LineUpdate, Reading};
 use layover_core::holds::{self, HoldSnapshot};
 use layover_core::lamp::Lamp;
 use layover_core::paths;
 use layover_core::protocol::{Reply, Request};
 use layover_core::state::{Effect, Event, Model, Station};
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
@@ -35,6 +37,10 @@ pub enum Msg {
         pid: u32,
         status: String,
     },
+    /// A tool's lamp line, or None when its feed ended.
+    Feed(Feed, Option<LampLine>),
+    /// The saver subscribed to the line.
+    LineWatch(Sender<String>),
 }
 
 const TICK: Duration = Duration::from_secs(5);
@@ -63,6 +69,12 @@ struct Daemon {
     /// Unix seconds when the daemon started, for the history's clock.
     started_wall: u64,
     rotation: Vec<&'static layover_hacks::Hack>,
+    /// What each tool's lamp says, and all of it put together.
+    readings: BTreeMap<Feed, Reading>,
+    desk: Desk,
+    /// Savers subscribed to the line, and the last update they got.
+    line_watchers: Vec<Sender<String>>,
+    last_line: String,
 }
 
 pub fn run(cfg: Config) -> Result<()> {
@@ -105,6 +117,7 @@ pub fn run(cfg: Config) -> Result<()> {
     }
 
     spawn_listener(listener, tx.clone());
+    crate::feeds::start(&cfg.feeds, &tx);
     let rotation = layover_hacks::rotation(&cfg.saver.hacks).map_err(|e| anyhow::anyhow!(e))?;
     let started_wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -128,6 +141,10 @@ pub fn run(cfg: Config) -> Result<()> {
         saver_started: None,
         started_wall,
         rotation,
+        readings: BTreeMap::new(),
+        desk: Desk::default(),
+        line_watchers: Vec::new(),
+        last_line: String::new(),
     };
     d.serve(rx)
 }
@@ -173,7 +190,7 @@ impl Daemon {
             Msg::Note(n) => log(&n),
             Msg::Request(req, reply) => {
                 let event = match req {
-                    Request::Status | Request::Watch | Request::Board => None,
+                    Request::Status | Request::Watch | Request::Board | Request::Line => None,
                     Request::Hold { secs } => Some(Event::Hold { secs }),
                     Request::Release => Some(Event::Release),
                     Request::Now => Some(Event::Now),
@@ -209,6 +226,30 @@ impl Daemon {
                 }
             }
             Msg::BoardGone(id) => self.boards.retain(|(b, _)| *b != id),
+            Msg::Feed(feed, lamp) => {
+                match lamp {
+                    Some(l) => {
+                        self.readings.insert(feed, feeds::read(feed, &l));
+                    }
+                    None => {
+                        self.readings.remove(&feed);
+                    }
+                }
+                let desk = feeds::desk(&self.readings, self.cfg.feeds.cheap);
+                if desk.cheap != self.desk.cheap {
+                    log(&match &desk.cheap {
+                        Some(why) => format!("cheap mode: {why}"),
+                        None => "full rate again".into(),
+                    });
+                    self.step(Event::Cheap { why: desk.cheap.clone() });
+                }
+                self.desk = desk;
+            }
+            Msg::LineWatch(sender) => {
+                if sender.send(self.line_update()).is_ok() {
+                    self.line_watchers.push(sender);
+                }
+            }
             Msg::SaverExited { pid, status } => {
                 if self.saver_pid == Some(pid) {
                     self.saver_pid = None;
@@ -326,10 +367,25 @@ impl Daemon {
         {
             h.mic = holds::mic_recording(&json).unwrap_or(false);
         }
+        h.on_air = self.desk.on_air;
+        h.meeting_soon = self.desk.meeting_soon;
         (h, lock_running(&self.cfg.line.lock_command))
     }
 
+    fn line_update(&self) -> String {
+        let update =
+            LineUpdate { rows: self.desk.rows.clone(), cheap: self.model.cheap().is_some() };
+        serde_json::to_string(&update).expect("a line update is plain data")
+    }
+
     fn publish(&mut self) {
+        if !self.line_watchers.is_empty() {
+            let line = self.line_update();
+            if line != self.last_line {
+                self.line_watchers.retain(|w| w.send(line.clone()).is_ok());
+                self.last_line = line;
+            }
+        }
         let lamp = self.model.lamp();
         if self.last_lamp.as_ref() != Some(&lamp) {
             let line = lamp.to_line();
@@ -427,6 +483,12 @@ fn describe_holds(h: &HoldSnapshot, locked: bool) -> String {
     }
     if h.mic {
         parts.push("mic recording".into());
+    }
+    if h.on_air {
+        parts.push("Logbook on air".into());
+    }
+    if h.meeting_soon {
+        parts.push("meeting soon".into());
     }
     if locked {
         parts.push("locked".into());
@@ -537,10 +599,12 @@ fn serve_client(stream: UnixStream, tx: Sender<Msg>) -> Result<()> {
                 continue;
             }
         };
-        if req == Request::Watch || req == Request::Board {
+        if req == Request::Watch || req == Request::Board || req == Request::Line {
             let (wtx, wrx) = mpsc::channel();
             if req == Request::Watch {
                 tx.send(Msg::Watch(wtx))?;
+            } else if req == Request::Line {
+                tx.send(Msg::LineWatch(wtx))?;
             } else {
                 // A subscriber that closed its socket must go at once: a
                 // toggle handed to it would be lost until a write failed.
