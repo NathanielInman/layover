@@ -1,0 +1,18 @@
+[package]
+name = "layover-hacks"
+description = "Layover's renderer: hacks in WGSL, the limiter and care pass, and the wear test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+layover-core = { path = "../layover-core" }
+anyhow.workspace = true
+wgpu = { version = "30", default-features = false, features = ["vulkan", "gles", "wgsl", "std"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+png = "0.18"
