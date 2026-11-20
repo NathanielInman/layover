@@ -429,6 +429,14 @@ impl Drawer {
         card.append(&label("THE IDLE LINE", &["t-label"]));
         card.append(&label(&s.headline, &["big", &s.state]));
         card.append(&wrapped(&s.reason, &["reason"]));
+        if let Some(why) = &s.cheap {
+            card.append(&wrapped(
+                &format!(
+                    "Cheap mode: {why}. The saver draws at half rate, half size and three quarters of the brightness."
+                ),
+                &["cheap"],
+            ));
+        }
         if let Some(h) = &s.hack {
             card.append(&label(&format!("Showing {h}"), &["showing"]));
         }
