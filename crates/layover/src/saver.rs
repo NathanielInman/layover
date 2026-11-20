@@ -49,8 +49,6 @@ use wayland_client::{
 const GRACE: Duration = Duration::from_millis(1200);
 /// Pointer travel that counts as someone at the desk, in surface pixels.
 const NUDGE: f64 = 12.0;
-/// Fade through black between hacks, and in at the start.
-const FADE: f32 = 1.5;
 
 pub struct Options {
     pub hacks: Vec<&'static Hack>,
@@ -307,32 +305,6 @@ impl Saver {
         Ok(())
     }
 
-    /// The hack showing at `elapsed` seconds, and how far it has faded in.
-    fn schedule(&self, elapsed: f32) -> (&'static Hack, f32) {
-        let spans: Vec<f32> = self
-            .hacks
-            .iter()
-            .map(|h| {
-                if h.text_heavy { self.cfg.care.text_rotate.0 } else { self.cfg.care.rotate.0 }
-                    .as_secs_f32()
-                    .max(30.0)
-            })
-            .collect();
-        let cycle: f32 = spans.iter().sum();
-        let mut at = elapsed % cycle;
-        for (hack, span) in self.hacks.iter().zip(&spans) {
-            if at < *span {
-                let fade_in = (at / FADE).min(1.0);
-                let fade_out = ((span - at) / FADE).min(1.0);
-                let start = (elapsed / FADE).min(1.0);
-                let fade = if self.hacks.len() > 1 { fade_in.min(fade_out) } else { 1.0 };
-                return (hack, fade.min(start));
-            }
-            at -= span;
-        }
-        (self.hacks[0], 1.0)
-    }
-
     fn draw(&mut self) {
         if self.exit.is_some() || self.failed.is_some() || self.renderer.is_none() {
             return;
@@ -341,7 +313,7 @@ impl Saver {
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(1.0);
         self.last_frame = now;
         let elapsed = now.duration_since(self.started).as_secs_f32();
-        let (hack, fade) = self.schedule(elapsed);
+        let (hack, fade) = layover_hacks::showing(&self.hacks, &self.cfg.care, elapsed);
         let phase = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
             % 86_400.0;
         let frame = Frame { hack, t: self.t_offset + elapsed, phase, dt, seed: self.seed };

@@ -59,6 +59,38 @@ pub fn find(id: &str) -> Option<&'static Hack> {
     HACKS.iter().find(|h| h.id == id)
 }
 
+/// Seconds of fade through black between hacks, and in at the start.
+pub const FADE: f32 = 1.5;
+
+/// The hack on screen `elapsed` seconds into a run, and how far it has
+/// faded in (0 to 1). Hacks take turns for `care.rotate` each, text-heavy
+/// ones for `care.text_rotate` (rule four).
+pub fn showing(
+    hacks: &[&'static Hack],
+    care: &layover_core::config::Care,
+    elapsed: f32,
+) -> (&'static Hack, f32) {
+    let spans: Vec<f32> = hacks
+        .iter()
+        .map(|h| {
+            if h.text_heavy { care.text_rotate.0 } else { care.rotate.0 }.as_secs_f32().max(30.0)
+        })
+        .collect();
+    let cycle: f32 = spans.iter().sum();
+    let mut at = elapsed % cycle.max(1.0);
+    for (hack, span) in hacks.iter().zip(&spans) {
+        if at < *span {
+            let fade_in = (at / FADE).min(1.0);
+            let fade_out = ((span - at) / FADE).min(1.0);
+            let start = (elapsed / FADE).min(1.0);
+            let fade = if hacks.len() > 1 { fade_in.min(fade_out) } else { 1.0 };
+            return (hack, fade.min(start));
+        }
+        at -= span;
+    }
+    (hacks[0], 1.0)
+}
+
 /// The rotation for a `[saver] hacks` list: every hack when empty. Unknown
 /// ids come back as errors so the config check can name them.
 pub fn rotation(ids: &[String]) -> Result<Vec<&'static Hack>, String> {
@@ -82,6 +114,18 @@ mod tests {
             assert!(h.id.chars().all(|c| c.is_ascii_lowercase() || c == '-'), "{}", h.id);
             assert!(HACKS[i + 1..].iter().all(|o| o.id != h.id), "duplicate {}", h.id);
         }
+    }
+
+    #[test]
+    fn hacks_take_turns_and_fade_through_black() {
+        let care = layover_core::config::Care::default();
+        let all = rotation(&[]).unwrap();
+        assert_eq!(showing(&all, &care, 0.0).1, 0.0, "a run fades in");
+        let (h, fade) = showing(&all, &care, 60.0);
+        assert_eq!((h.id, fade), (all[0].id, 1.0));
+        assert_eq!(showing(&all, &care, 601.0).0.id, all[1].id, "the second hack after 10m");
+        assert!(showing(&all, &care, 599.5).1 < 1.0, "fading out before the hand-off");
+        assert_eq!(showing(&all, &care, 4.0 * 600.0 + 60.0).0.id, all[0].id, "and round again");
     }
 
     #[test]
