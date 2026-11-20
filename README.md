@@ -99,6 +99,29 @@ hl.exec_cmd("~/.local/bin/layover daemon")
 Then add the lamp to waybar from `packaging/examples/waybar-modules.jsonc`
 and `packaging/examples/waybar-style.css`.
 
+## Locking, and a YubiKey on the lock screen
+
+Layover runs your lock command (`hyprlock` by default) as the screens go off,
+and never draws a password prompt itself. To unlock hyprlock with a touch of
+a YubiKey instead of (or as well as) your password, use `pam_u2f`. A
+suggestion, not tested on every setup:
+
+```sh
+sudo pacman -S pam-u2f
+mkdir -p ~/.config/Yubico
+pamu2fcfg > ~/.config/Yubico/u2f_keys      # touch the key when it blinks
+```
+
+Then add one line to `/etc/pam.d/hyprlock`, above `auth include login`:
+
+```
+auth sufficient pam_u2f.so cue
+```
+
+`sufficient` lets the key alone unlock; `required` asks for the key and your
+password. Keep a root shell open while you try it, lock with your usual
+bind, press Enter on the empty field and touch the key when the cue shows.
+
 ## The lamp
 
 | Lamp | Means |
