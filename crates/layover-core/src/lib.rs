@@ -3,5 +3,8 @@
 
 pub mod config;
 pub mod holds;
+pub mod lamp;
 pub mod paths;
+pub mod protocol;
 pub mod span;
+pub mod state;
