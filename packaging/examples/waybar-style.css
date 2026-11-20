@@ -1,0 +1,6 @@
+/* Waybar styles for the Layover lamp, from the README. Merge into
+   ~/.config/waybar/style.css and adjust the colors. */
+#custom-layover { color: #616e88; }
+#custom-layover.held,
+#custom-layover.loose { color: #ebcb8b; }
+#custom-layover.saver { color: #88c0d0; }

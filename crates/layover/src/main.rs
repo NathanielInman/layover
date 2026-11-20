@@ -1,19 +1,34 @@
 //! `layover`: the daemon, the saver, the waybar module and the CLI.
 
+mod daemon;
+mod log;
 mod saver;
+mod wayland;
 
 use anyhow::{Context, Result, anyhow, bail};
 use layover_core::config::{Concern, Config};
+use layover_core::lamp::Lamp;
 use layover_core::paths;
+use layover_core::protocol::{Reply, Request};
 use layover_core::span::parse_duration;
 use layover_hacks::wear::{self, Budget};
 use layover_hacks::{HACKS, renderer::CareSettings};
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const USAGE: &str = "\
 layover: a screensaver for Wayland that looks after your monitor
 
 Usage:
+  layover daemon                 run the idle line (start it from your compositor)
+  layover bar                    the waybar module: one JSON line per change
+  layover status                 what the idle line is doing, and why
+  layover now                    start the saver now
+  layover stop                   stop the saver
+  layover hold <duration>        hold the saver, the lock and the dark (\"1h\", \"30m\")
+  layover release                end a hold
   layover check                  check the config and list every value looser than shipped
   layover hacks                  list the hacks
   layover saver [--hack <id>]... [--for <duration>]
@@ -48,7 +63,29 @@ fn run(args: &[String]) -> Result<i32> {
     };
     let rest = &args[1..];
     match cmd.as_str() {
+        "daemon" => {
+            let cfg = load_config()?;
+            layover_hacks::rotation(&cfg.saver.hacks).map_err(|e| anyhow!("[saver] hacks: {e}"))?;
+            daemon::run(cfg)?;
+            Ok(0)
+        }
         "saver" => saver_cmd(rest),
+        "bar" => bar(),
+        "status" => {
+            match ask(&Request::Status) {
+                Ok(lamp) => println!("{}", lamp.tooltip),
+                Err(_) => println!("{}", Lamp::off().tooltip),
+            }
+            Ok(0)
+        }
+        "now" => print_reply(ask(&Request::Now)?),
+        "stop" => print_reply(ask(&Request::Stop)?),
+        "release" => print_reply(ask(&Request::Release)?),
+        "hold" => {
+            let d = rest.first().ok_or_else(|| anyhow!("hold how long? e.g. `layover hold 1h`"))?;
+            let secs = parse_duration(d).map_err(|e| anyhow!(e))?.as_secs();
+            print_reply(ask(&Request::Hold { secs })?)
+        }
         "check" => check(),
         "hacks" => {
             let cfg = load_config().unwrap_or_default();
@@ -73,6 +110,53 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(0)
         }
         other => bail!("no command `{other}` (`layover help` lists them)"),
+    }
+}
+
+fn print_reply(lamp: Lamp) -> Result<i32> {
+    println!("{}", lamp.tooltip);
+    Ok(0)
+}
+
+fn connect() -> Result<UnixStream> {
+    UnixStream::connect(paths::socket())
+        .context("Layover's daemon isn't running (`layover daemon` starts it)")
+}
+
+fn ask(req: &Request) -> Result<Lamp> {
+    let mut s = connect()?;
+    s.set_read_timeout(Some(Duration::from_secs(6)))?;
+    writeln!(s, "{}", serde_json::to_string(req)?)?;
+    let mut line = String::new();
+    BufReader::new(s).read_line(&mut line)?;
+    match serde_json::from_str::<Reply>(&line).context("the daemon's answer isn't a reply")? {
+        Reply::Lamp(l) => Ok(l),
+        Reply::Error { error } => bail!(error),
+    }
+}
+
+/// The waybar module: print the lamp on every change, and the off lamp
+/// (then try again) whenever the daemon is gone.
+fn bar() -> Result<i32> {
+    let mut out = std::io::stdout().lock();
+    let mut shown_off = false;
+    loop {
+        if let Ok(mut s) = connect()
+            && writeln!(s, "{}", serde_json::to_string(&Request::Watch)?).is_ok()
+        {
+            shown_off = false;
+            for line in BufReader::new(s).lines() {
+                let Ok(line) = line else { break };
+                writeln!(out, "{line}")?;
+                out.flush()?;
+            }
+        }
+        if !shown_off {
+            writeln!(out, "{}", Lamp::off().to_line())?;
+            out.flush()?;
+            shown_off = true;
+        }
+        std::thread::sleep(Duration::from_secs(2));
     }
 }
 

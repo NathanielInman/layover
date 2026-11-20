@@ -1,0 +1,19 @@
+// The Layover lamp for waybar, from the README. Merge it into your
+// ~/.config/waybar/config.jsonc and add "custom/layover" to a modules list.
+"custom/layover": {
+  "exec": "~/.local/bin/layover bar",
+  "return-type": "json",
+  "format": "{icon}",
+  "format-icons": {
+    "armed": "●",
+    "held": "●",
+    "saver": "●",
+    "dark": "●",
+    "loose": "◍",
+    "off": ""
+  },
+  "on-click": "~/.local/bin/layover now",
+  "on-click-right": "~/.local/bin/layover hold 1h",
+  "on-click-middle": "~/.local/bin/layover release",
+  "tooltip": true
+}
