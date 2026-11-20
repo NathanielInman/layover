@@ -14,7 +14,7 @@ fn hack(p: vec2<f32>, t: f32) -> vec3<f32> {
         let fi = f32(i) + g.seed * 13.0;
         let h = hash22(vec2<f32>(fi, fi * 1.7 + 3.0));
         let v = (hash22(vec2<f32>(fi * 2.3, 9.1)) - 0.5) * vec2<f32>(0.02, 0.012);
-        let v2 = v + sign(v) * vec2<f32>(0.004, 0.002);
+        let v2 = v + sign(v) * vec2<f32>(0.008, 0.004);
         let pos = vec2<f32>(
             fract(h.x + t * v2.x / (a + 0.6)) * (a + 0.6) - 0.3,
             fract(h.y + t * v2.y / 1.6) * 1.6 - 0.3,
@@ -25,7 +25,7 @@ fn hack(p: vec2<f32>, t: f32) -> vec3<f32> {
             continue;
         }
         let tint = tints[u32(hash11(fi * 7.7) * 4.0) % 4u];
-        var level = 0.16 + 0.08 * sin(t * 0.5 + fi * 3.0);
+        var level = 0.16 + 0.09 * sin(t * 1.1 + fi * 3.0);
         if (hash11(fi * 1.9) > 0.85) {
             level = level * select(0.15, 1.5, sin(t * 2.6 + fi) > 0.0);
         }
