@@ -4,7 +4,9 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use layover_core::config::Config;
+use layover_core::feeds::{self, LineUpdate, Row};
 use layover_hacks::Hack;
+use layover_hacks::board::{BoardData, DATA_ROWS};
 use layover_hacks::gpu::{self, Gpu};
 use layover_hacks::renderer::{CareSettings, Frame, Placement, Renderer};
 use raw_window_handle::{
@@ -18,6 +20,7 @@ use smithay_client_toolkit::{
     reexports::{
         calloop::{
             EventLoop,
+            channel::{self as cchannel, Event as ChannelEvent},
             timer::{TimeoutAction, Timer},
         },
         calloop_wayland_source::WaylandSource,
@@ -36,6 +39,8 @@ use smithay_client_toolkit::{
         },
     },
 };
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::ptr::NonNull;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use wayland_client::{
@@ -90,6 +95,13 @@ struct Saver {
     pointer_from: Option<(f64, f64)>,
     exit: Option<&'static str>,
     failed: Option<anyhow::Error>,
+    /// The line's rows with when each last changed (`HH:MM`, hack seconds).
+    rows: Vec<(Row, String, f32)>,
+    clock: String,
+    header_changed: f32,
+    board_dirty: bool,
+    /// Cheap mode, from the daemon: half rate, half size, dimmer.
+    cheap: bool,
 }
 
 fn noise_seed() -> u64 {
@@ -135,6 +147,11 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         pointer_from: None,
         exit: None,
         failed: None,
+        rows: Vec::new(),
+        clock: String::new(),
+        header_changed: 0.0,
+        board_dirty: true,
+        cheap: false,
     };
     // Learn the outputs and where they sit.
     queue.roundtrip(&mut state).context("talking to the compositor")?;
@@ -183,12 +200,21 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     WaylandSource::new(conn, queue)
         .insert(event_loop.handle())
         .map_err(|e| anyhow!("watching the Wayland socket: {e}"))?;
-    let interval = Duration::from_secs_f64(1.0 / cfg.power.effective_fps().max(1) as f64);
+    let (line_tx, line_rx) = cchannel::channel::<LineUpdate>();
+    subscribe_line(line_tx);
     event_loop
         .handle()
-        .insert_source(Timer::from_duration(interval), move |_, _, s: &mut Saver| {
+        .insert_source(line_rx, |ev, _, s: &mut Saver| {
+            if let ChannelEvent::Msg(update) = ev {
+                s.take_line(update);
+            }
+        })
+        .map_err(|e| anyhow!("watching the line: {e}"))?;
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(state.interval()), |_, _, s: &mut Saver| {
             s.draw();
-            TimeoutAction::ToDuration(interval)
+            TimeoutAction::ToDuration(s.interval())
         })
         .map_err(|e| anyhow!("starting the frame timer: {e}"))?;
 
@@ -213,7 +239,100 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
     Ok(())
 }
 
+/// Ask the daemon for the line: the board's rows and cheap mode, now and on
+/// every change. Without a daemon the board says nothing is on the line.
+fn subscribe_line(tx: cchannel::Sender<LineUpdate>) {
+    std::thread::spawn(move || {
+        let Ok(mut s) = UnixStream::connect(layover_core::paths::socket()) else { return };
+        if writeln!(s, r#"{{"cmd":"line"}}"#).is_err() {
+            return;
+        }
+        for line in BufReader::new(s).lines() {
+            let Ok(line) = line else { return };
+            if let Ok(update) = serde_json::from_str::<LineUpdate>(&line)
+                && tx.send(update).is_err()
+            {
+                return;
+            }
+        }
+    });
+}
+
+fn clock_now() -> String {
+    let unix = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    crate::log::clock_at(unix).chars().take(5).collect()
+}
+
 impl Saver {
+    fn interval(&self) -> Duration {
+        let div = if self.cheap { feeds::CHEAP_FPS_DIVISOR } else { 1 };
+        let fps = (self.cfg.power.effective_fps() / div).max(1);
+        Duration::from_secs_f64(1.0 / fps as f64)
+    }
+
+    fn hack_time(&self) -> f32 {
+        self.t_offset + self.started.elapsed().as_secs_f32()
+    }
+
+    fn offscreen_size(&self) -> [u32; 2] {
+        let cheap = if self.cheap { feeds::CHEAP_SCALE } else { 1.0 };
+        let scale = self.outs.iter().map(|o| o.scale).max().unwrap_or(1) as f32
+            * self.cfg.power.effective_scale()
+            * cheap;
+        [(self.canvas[0] * scale).round() as u32, (self.canvas[1] * scale).round() as u32]
+    }
+
+    /// The line changed: note which rows did, and switch cheap mode.
+    fn take_line(&mut self, update: LineUpdate) {
+        let t = self.hack_time();
+        let now = clock_now();
+        let rows = update
+            .rows
+            .into_iter()
+            .take(DATA_ROWS)
+            .map(|r| match self.rows.iter().find(|(p, _, _)| p.from == r.from) {
+                Some((p, at, changed)) if *p == r => (r, at.clone(), *changed),
+                _ => (r, now.clone(), t),
+            })
+            .collect();
+        self.rows = rows;
+        self.board_dirty = true;
+        if update.cheap != self.cheap {
+            self.cheap = update.cheap;
+            eprintln!("layover saver: {}", if self.cheap { "cheap mode" } else { "full rate" });
+            self.apply_cheap();
+        }
+    }
+
+    fn apply_cheap(&mut self) {
+        let size = self.offscreen_size();
+        let canvas = self.canvas;
+        if let Some(r) = self.renderer.as_mut() {
+            r.set_dim(if self.cheap { feeds::CHEAP_DIM } else { 1.0 });
+            r.resize(canvas, size);
+        }
+    }
+
+    /// Upload the board when a row or the clock changed.
+    fn refresh_board(&mut self) {
+        let now = clock_now();
+        if now != self.clock {
+            self.clock = now;
+            self.header_changed = self.hack_time();
+            self.board_dirty = true;
+        }
+        if !self.board_dirty {
+            return;
+        }
+        let Some(r) = self.renderer.as_ref() else { return };
+        let rows: Vec<Row> = self.rows.iter().map(|(r, _, _)| r.clone()).collect();
+        let times: Vec<String> = self.rows.iter().map(|(_, at, _)| at.clone()).collect();
+        let mut changed = vec![self.header_changed];
+        changed.extend(self.rows.iter().map(|(_, _, t)| *t));
+        r.set_board(&BoardData::compose(&rows, &times, &self.clock, &changed));
+        self.board_dirty = false;
+    }
+
     fn layout_canvas(&mut self) {
         let min_x = self.outs.iter().map(|o| o.logical[0]).min().unwrap_or(0);
         let min_y = self.outs.iter().map(|o| o.logical[1]).min().unwrap_or(0);
@@ -249,18 +368,15 @@ impl Saver {
                 Gpu::new(&self.instance, self.cfg.power.gpu, self.outs[idx].gpu_surface.as_ref())?;
             eprintln!("layover saver: drawing on {}", gpu.describe());
             let mut renderer = Renderer::new(&gpu.device, &gpu.queue, self.care.clone());
-            let scale = self.outs.iter().map(|o| o.scale).max().unwrap_or(1) as f32
-                * self.cfg.power.effective_scale();
-            renderer.resize(
-                self.canvas,
-                [(self.canvas[0] * scale).round() as u32, (self.canvas[1] * scale).round() as u32],
-            );
+            renderer.resize(self.canvas, self.offscreen_size());
+            renderer.set_dim(if self.cheap { feeds::CHEAP_DIM } else { 1.0 });
             renderer.reset_limiter();
             for hack in &self.hacks {
                 renderer.prepare(hack)?;
             }
             self.renderer = Some(renderer);
             self.gpu = Some(gpu);
+            self.board_dirty = true;
         }
         Ok(())
     }
@@ -314,6 +430,9 @@ impl Saver {
         self.last_frame = now;
         let elapsed = now.duration_since(self.started).as_secs_f32();
         let (hack, fade) = layover_hacks::showing(&self.hacks, &self.cfg.care, elapsed);
+        if hack.board {
+            self.refresh_board();
+        }
         let phase = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
             % 86_400.0;
         let frame = Frame { hack, t: self.t_offset + elapsed, phase, dt, seed: self.seed };
