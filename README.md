@@ -7,9 +7,124 @@
 </p>
 
 A layover is the rest a train crew takes between runs. Layover is what your
-desk does between yours.
+desk does between yours. [Switchyard](https://github.com/NathanielInman/switchyard)
+dispatches your work, [Roundhouse](https://github.com/NathanielInman/roundhouse)
+says whether the machine is fit to run it, and Layover looks after the screen
+while you're away.
 
-Layover is early and not usable yet. `docs/design.md` is the spec.
+Layover is early (0.1). It runs on Hyprland; sway and niri should work but
+are untested. `docs/design.md` is the spec.
+
+## Why
+
+xscreensaver is an X11 program. Under Wayland it can't tell when you're idle
+and can't lock, so most Wayland desks run hypridle, a shell script and a
+lock screen, and the screen just goes black. Layover brings the hacks back,
+draws them with the GPU across every output as one picture (a Samsung G9
+split into two outputs gets one 32:9 scene), and treats your panel like an
+OLED it has to look after.
+
+## Rule one
+
+Every hack wears the panel evenly, gently and briefly.
+
+1. **Nothing holds still.** A lit pixel changes within 20 seconds, and the
+   whole frame slowly orbits.
+2. **Dim by default.** No subpixel above 60%, and a limiter holds the
+   frame's average under 12%.
+3. **Share the load across subpixels.** Colors turn through the color wheel
+   every 6 minutes so red, green and blue age together, and white is capped.
+4. **Take turns, then rest.** Hacks hand off every 10 minutes, and the run
+   ends with the screens off.
+5. **Measured, not eyeballed.** Every hack passes a wear test in CI: an
+   hour rendered headless, light added up per pixel, checked against the
+   budget.
+6. **Safe defaults, honest warnings.** You can change any limit. The shipped
+   config says why each exists, and `layover check` and the lamp list every
+   value you've loosened.
+
+## The idle line
+
+| After | What happens |
+| --- | --- |
+| 15 minutes idle | A hack starts. Any key, click or real pointer movement dismisses it. |
+| 1 hour idle | The session locks (hyprlock) and the screens turn off. |
+
+While a lock screen is up and the screens are on, they turn off after a
+minute: a lock screen doesn't move. Both timings go down to 1 minute or off.
+
+Some things hold the line: a window keeping the screen on (a video), an app
+recording from a microphone (a call), and `layover hold`. Playing audio holds
+only the dark, so music never leaves a still desktop on the panel: the saver
+runs instead. Idle inhibitors from windows that hold one all the time (T3
+Code's) are ignored.
+
+## Install
+
+```sh
+cargo build --release --locked
+install -Dm755 target/release/layover ~/.local/bin/layover
+```
+
+It needs a Vulkan driver, `pactl` (for the audio and microphone holds) and a
+compositor with `ext-idle-notify-v1`, `wlr-layer-shell` and
+`wlr-output-power-management`.
+
+Start the daemon with your compositor, in place of hypridle. Hyprland
+(0.55+, Lua config):
+
+```lua
+hl.exec_cmd("~/.local/bin/layover daemon")
+```
+
+Then add the lamp to waybar from `packaging/examples/waybar-modules.jsonc`
+and `packaging/examples/waybar-style.css`.
+
+## The lamp
+
+| Lamp | Means |
+| --- | --- |
+| dim dot | armed, waiting |
+| amber dot | held: the tooltip says by what |
+| frost dot | a hack is running |
+| amber ring | your config is looser than shipped |
+
+Click it to start the saver now, right-click to hold for an hour,
+middle-click to release.
+
+## Commands
+
+```
+layover daemon                 run the idle line
+layover bar                    the waybar module
+layover status                 what the idle line is doing, and why
+layover now | stop             start or stop the saver
+layover hold 1h | release      hold the line, or end the hold
+layover check                  check the config and list loosened values
+layover hacks                  list the hacks
+layover saver --hack starfield --for 20s
+                               show a hack now, without the daemon
+layover wear [<id>...]         run the wear test against your config and write heat maps
+```
+
+## Hacks
+
+| Hack | |
+| --- | --- |
+| `night-mail` | A mail train crosses dark hills while the moon climbs across the sky. |
+| `frost-aurora` | Frost, green and purple curtains over black mountains. |
+| `signal-lamps` | Out-of-focus yard lamps drifting in the dark, a few of them blinking. |
+| `starfield` | The classic flight through the stars, rebuilt for 32:9. |
+
+A hack is one WGSL function, `hack(p, t) -> color`, in
+`crates/layover-hacks/src/hacks/`. The care pass applies rule one after it,
+and the wear test decides whether it ships.
+
+## Config
+
+`~/.config/layover/layover.toml`. Every key, with its reason and warning, is
+in [`packaging/examples/config.toml`](packaging/examples/config.toml). A
+missing file means the shipped defaults.
 
 ## License
 
