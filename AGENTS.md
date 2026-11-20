@@ -40,7 +40,7 @@ exits without touching the daemon.
 - New config keys go in `config.rs` defaults, `packaging/examples/config.toml`
   (with the reason and, for a protective value, the warning) and the spec. A
   test fails when the example and the defaults disagree.
-- Hands off other programs: Layover reads Hyprland and ALSA and never changes
+- Hands off other programs: Layover reads Hyprland and pactl and never changes
   their state. The only things it sends are output power, the user's lock
   command and the user's own commands.
 - The daemon never blocks on the saver or the lock: both are child processes.
