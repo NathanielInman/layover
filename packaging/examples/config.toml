@@ -1,0 +1,117 @@
+# ~/.config/layover/layover.toml, as shipped
+#
+# Every value here can be changed. The defaults exist to protect your
+# monitor and your power bill. Layover runs with whatever you set, but
+# `layover check`, the daemon log and the lamp's tooltip list every value
+# that is looser than shipped, and what it puts at risk.
+#
+# Durations are written "20s", "15m", "1h" or "1h30m".
+
+[line]
+# Idle before a hack starts. The shortest is "1m".
+# WARNING: "off" leaves your desktop sitting still on the panel until the
+# screens go off.
+saver = "15m"
+
+# Idle before the screens turn off. The shortest is "1m".
+# WARNING: "off" leaves the screens on forever. A hack then runs all night,
+# the panel never rests, and it never gets the standby time OLEDs use for
+# their own pixel refresh.
+dark = "1h"
+
+# When the session locks: "dark" (as the screens go off), a duration, or
+# "off". Until Layover has its own lock, hyprlock shows a still screenshot
+# and clock, which is why the default locks as the screens go off.
+lock = "dark"
+
+# While a lock screen is up and the screens are on (you locked by hand, or
+# woke the screens and walked away), they go off after this much idle.
+# WARNING: a lock screen does not move. Raising this keeps it still on the
+# panel for longer; "off" keeps it there until you come back.
+locked_dark = "1m"
+
+# The program that locks the session.
+lock_command = ["hyprlock"]
+
+# Only used when the compositor lacks wlr-output-power-management: commands
+# that turn the screens off and back on. Hyprland 0.55 and later, for example:
+#   dark_command = ["hyprctl", "dispatch", "hl.dsp.dpms({ action = \"off\" })"]
+#   wake_command = ["hyprctl", "dispatch", "hl.dsp.dpms({ action = \"on\" })"]
+dark_command = []
+wake_command = []
+
+[holds]
+# A window that asks the screen to stay on (a video playing) holds the saver,
+# the lock and the dark.
+inhibitors = true
+
+# Window classes whose idle inhibitors don't count, for apps that hold one
+# all the time. T3 Code's window holds one for long stretches.
+ignore = ["com.t3tools.T3Code"]
+
+# An app recording from a microphone (a call) holds the saver, the lock and
+# the dark.
+mic = true
+
+# What playing audio holds: "dark" (the screens stay on, but the saver still
+# runs), "all", or "off".
+# WARNING: "all" leaves your desktop sitting still on the panel for as long
+# as music plays.
+audio = "dark"
+
+[care]
+# Rule one: every hack wears the panel evenly, gently and briefly.
+# WARNING: these are burn-in limits. Raising any of them, or turning one
+# off, puts your monitor at risk. Lowering them is always safe.
+
+# The brightest any subpixel is driven, from 0 to 1. Brighter subpixels age
+# faster.
+max_drive = 0.60
+
+# The average level of the whole frame. Layover dims a frame that goes over.
+max_average = 0.12
+
+# A lit pixel must change within this. Hacks that break it fail the wear test.
+max_dwell = "20s"
+
+# The whole frame drifts a few pixels on this cycle, so nothing sits still.
+orbit = "4m"
+
+# Colors turn through the color wheel on this cycle, so red, green and blue
+# age together.
+hue_cycle = "6m"
+
+# The most light where red, green and blue are all lit at once (white).
+max_white = 0.35
+
+# Hacks hand off after this, so no single pattern keeps wearing the same
+# pixels.
+rotate = "10m"
+
+# Text-heavy hacks hand off sooner. Text is the hardest thing on a panel.
+text_rotate = "3m"
+
+# No area's average level may go above this over a run. Used by the wear test.
+max_hot_spot = 0.25
+
+[power]
+# "save", or "off" to render at full size and 60 fps.
+# WARNING: "off" ignores the rest of this section and spends energy and GPU
+# heat on something nobody is watching.
+mode = "save"
+
+# Frames per second while a hack runs.
+fps = 30
+
+# Hacks draw at this fraction of the screen's size and the GPU scales them
+# up. Most hacks are soft enough that you can't tell.
+render_scale = 0.5
+
+# Which GPU draws: "auto" (the one driving the screens), "low-power" or
+# "high-performance".
+gpu = "auto"
+
+[saver]
+# Hacks in the rotation, by id (`layover hacks` lists them). Empty means
+# every hack.
+hacks = []
