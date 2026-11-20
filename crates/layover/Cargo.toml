@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 layover-core = { path = "../layover-core" }
+bar-anchor = { path = "../bar-anchor" }
 layover-hacks = { path = "../layover-hacks" }
 anyhow.workspace = true
 serde.workspace = true

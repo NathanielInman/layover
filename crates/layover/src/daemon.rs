@@ -6,6 +6,7 @@
 use crate::log::log;
 use crate::wayland::{self, Screens};
 use anyhow::{Context, Result, bail};
+use layover_core::board::{BoardEvent, HackView};
 use layover_core::config::Config;
 use layover_core::holds::{self, HoldSnapshot};
 use layover_core::lamp::Lamp;
@@ -26,6 +27,7 @@ pub enum Msg {
     Note(String),
     Request(Request, Sender<Reply>),
     Watch(Sender<String>),
+    Board(Sender<String>),
     SaverExited { pid: u32, status: String },
 }
 
@@ -45,6 +47,16 @@ struct Daemon {
     last_lamp: Option<Lamp>,
     tx: Sender<Msg>,
     warned_no_power: bool,
+    /// Drawers subscribed to snapshots (one, normally).
+    boards: Vec<Sender<String>>,
+    last_snapshot: String,
+    /// A show waiting for a drawer that is starting.
+    pending_board: Option<String>,
+    board_started: Option<Instant>,
+    saver_started: Option<Instant>,
+    /// Unix seconds when the daemon started, for the history's clock.
+    started_wall: u64,
+    rotation: Vec<&'static layover_hacks::Hack>,
 }
 
 pub fn run(cfg: Config) -> Result<()> {
@@ -87,6 +99,11 @@ pub fn run(cfg: Config) -> Result<()> {
     }
 
     spawn_listener(listener, tx.clone());
+    let rotation = layover_hacks::rotation(&cfg.saver.hacks).map_err(|e| anyhow::anyhow!(e))?;
+    let started_wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
     let mut d = Daemon {
         model: Model::new(&cfg),
         cfg,
@@ -98,6 +115,13 @@ pub fn run(cfg: Config) -> Result<()> {
         last_lamp: None,
         tx,
         warned_no_power: false,
+        boards: Vec::new(),
+        last_snapshot: String::new(),
+        pending_board: None,
+        board_started: None,
+        saver_started: None,
+        started_wall,
+        rotation,
     };
     d.serve(rx)
 }
@@ -143,11 +167,19 @@ impl Daemon {
             Msg::Note(n) => log(&n),
             Msg::Request(req, reply) => {
                 let event = match req {
-                    Request::Status | Request::Watch => None,
+                    Request::Status | Request::Watch | Request::Board => None,
                     Request::Hold { secs } => Some(Event::Hold { secs }),
                     Request::Release => Some(Event::Release),
                     Request::Now => Some(Event::Now),
                     Request::Stop => Some(Event::Stop),
+                    Request::Toggle { anchor } => {
+                        self.send_board(BoardEvent::Toggle { anchor });
+                        None
+                    }
+                    Request::Show { anchor } => {
+                        self.send_board(BoardEvent::Show { anchor });
+                        None
+                    }
                 };
                 if let Some(e) = event {
                     log(&format!("asked: {e:?}"));
@@ -160,9 +192,20 @@ impl Daemon {
                     self.watchers.push(sender);
                 }
             }
+            Msg::Board(sender) => {
+                let snap = self.snapshot_line();
+                let mut ok = sender.send(snap).is_ok();
+                if let Some(p) = self.pending_board.take() {
+                    ok &= sender.send(p).is_ok();
+                }
+                if ok {
+                    self.boards.push(sender);
+                }
+            }
             Msg::SaverExited { pid, status } => {
                 if self.saver_pid == Some(pid) {
                     self.saver_pid = None;
+                    self.saver_started = None;
                     log(&format!("saver exited: {status}"));
                     self.step(Event::SaverExited);
                 }
@@ -241,6 +284,7 @@ impl Daemon {
                 let pid = child.id();
                 log(&format!("saver started (pid {pid})"));
                 self.saver_pid = Some(pid);
+                self.saver_started = Some(Instant::now());
                 let tx = self.tx.clone();
                 std::thread::spawn(move || {
                     let status = match child.wait() {
@@ -280,12 +324,89 @@ impl Daemon {
 
     fn publish(&mut self) {
         let lamp = self.model.lamp();
-        if self.last_lamp.as_ref() == Some(&lamp) {
+        if self.last_lamp.as_ref() != Some(&lamp) {
+            let line = lamp.to_line();
+            self.watchers.retain(|w| w.send(line.clone()).is_ok());
+            self.last_lamp = Some(lamp);
+        }
+        if !self.boards.is_empty() {
+            let snap = self.snapshot_line();
+            if snap != self.last_snapshot {
+                self.boards.retain(|b| b.send(snap.clone()).is_ok());
+                self.last_snapshot = snap;
+            }
+        }
+    }
+
+    fn snapshot_line(&self) -> String {
+        let started = self.started_wall;
+        let clock = move |at: u64| crate::log::clock_at(started + at);
+        let hack = self.saver_started.map(|t| {
+            let (h, _) =
+                layover_hacks::showing(&self.rotation, &self.cfg.care, t.elapsed().as_secs_f32());
+            h.name.to_string()
+        });
+        let hacks = layover_hacks::HACKS
+            .iter()
+            .map(|h| HackView {
+                id: h.id.into(),
+                name: h.name.into(),
+                about: h.about.into(),
+                in_rotation: self.rotation.iter().any(|r| r.id == h.id),
+            })
+            .collect();
+        let snapshot = self.model.snapshot(&clock, hack, hacks);
+        serde_json::to_string(&BoardEvent::Snapshot { snapshot: Box::new(snapshot) })
+            .expect("a snapshot is plain data")
+    }
+
+    /// Delivers a show or toggle to the drawer, starting it when none is
+    /// connected.
+    fn send_board(&mut self, ev: BoardEvent) {
+        let line = serde_json::to_string(&ev).expect("an event is plain data");
+        self.boards.retain(|b| b.send(line.clone()).is_ok());
+        if !self.boards.is_empty() {
             return;
         }
-        let line = lamp.to_line();
-        self.watchers.retain(|w| w.send(line.clone()).is_ok());
-        self.last_lamp = Some(lamp);
+        let show = match ev {
+            BoardEvent::Toggle { anchor } | BoardEvent::Show { anchor } => {
+                BoardEvent::Show { anchor }
+            }
+            _ => return,
+        };
+        self.pending_board = Some(serde_json::to_string(&show).expect("an event is plain data"));
+        if self.board_started.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
+            self.board_started = Some(Instant::now());
+            spawn_board();
+        }
+    }
+}
+
+/// Starts `layover-board`, preferring the one installed next to `layover`.
+fn spawn_board() {
+    let local = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("layover-board")))
+        .filter(|p| p.exists());
+    let bin = local.map(|p| p.into_os_string()).unwrap_or_else(|| "layover-board".into());
+    let mut cmd = Command::new(&bin);
+    cmd.stdin(Stdio::null());
+    if let Some(dir) = paths::board_log().parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(paths::board_log())
+        && let Ok(f2) = f.try_clone()
+    {
+        cmd.stdout(f).stderr(f2);
+    }
+    match cmd.spawn() {
+        Ok(mut child) => {
+            log("drawer started");
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => log(&format!("can't start {}: {e}", bin.to_string_lossy())),
     }
 }
 
@@ -409,9 +530,9 @@ fn serve_client(stream: UnixStream, tx: Sender<Msg>) -> Result<()> {
                 continue;
             }
         };
-        if req == Request::Watch {
+        if req == Request::Watch || req == Request::Board {
             let (wtx, wrx) = mpsc::channel();
-            tx.send(Msg::Watch(wtx))?;
+            tx.send(if req == Request::Watch { Msg::Watch(wtx) } else { Msg::Board(wtx) })?;
             for lamp in wrx {
                 writeln!(writer, "{lamp}")?;
                 writer.flush()?;

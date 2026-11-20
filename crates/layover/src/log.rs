@@ -18,6 +18,17 @@ fn open() -> Option<File> {
     OpenOptions::new().create(true).append(true).open(path).ok()
 }
 
+/// Local time of a Unix second as `14:02:11`.
+pub fn clock_at(unix: u64) -> String {
+    // SAFETY: localtime_r writes only into our own struct.
+    unsafe {
+        let t = unix as libc::time_t;
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+    }
+}
+
 /// Local time as `2026-11-20 14:02:11`.
 pub fn stamp() -> String {
     // SAFETY: time and localtime_r write only into our own struct.

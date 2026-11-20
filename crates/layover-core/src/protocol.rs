@@ -1,9 +1,10 @@
 //! The daemon's socket: one JSON object per line each way.
 
 use crate::lamp::Lamp;
+use bar_anchor::Anchor;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "lowercase")]
 pub enum Request {
     Status,
@@ -15,6 +16,18 @@ pub enum Request {
     Release,
     Now,
     Stop,
+    /// Open the drawer from `anchor`, or close it when it is open.
+    Toggle {
+        #[serde(default)]
+        anchor: Option<Anchor>,
+    },
+    /// Open the drawer from `anchor`.
+    Show {
+        #[serde(default)]
+        anchor: Option<Anchor>,
+    },
+    /// The drawer subscribes: snapshots and open/close events, one per line.
+    Board,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +52,11 @@ mod tests {
             Request::Hold { secs: 3600 }
         );
         assert!(serde_json::from_str::<Request>(r#"{"cmd":"explode"}"#).is_err());
+        assert_eq!(
+            serde_json::from_str::<Request>(r#"{"cmd":"toggle"}"#).unwrap(),
+            Request::Toggle { anchor: None }
+        );
+        assert_eq!(serde_json::from_str::<Request>(r#"{"cmd":"board"}"#).unwrap(), Request::Board);
     }
 
     #[test]

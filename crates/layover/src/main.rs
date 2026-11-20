@@ -24,6 +24,8 @@ layover: a screensaver for Wayland that looks after your monitor
 Usage:
   layover daemon                 run the idle line (start it from your compositor)
   layover bar                    the waybar module: one JSON line per change
+  layover toggle [--center]      open or close the drawer from the clicked moon
+  layover show [--center]        open the drawer
   layover status                 what the idle line is doing, and why
   layover now                    start the saver now
   layover stop                   stop the saver
@@ -76,6 +78,19 @@ fn run(args: &[String]) -> Result<i32> {
                 Ok(lamp) => println!("{}", lamp.tooltip),
                 Err(_) => println!("{}", Lamp::off().tooltip),
             }
+            Ok(0)
+        }
+        cmd @ ("toggle" | "show") => {
+            let cfg = load_config().unwrap_or_default();
+            // Ask the compositor first: the cursor is still on the icon.
+            let hint = layover_core::waybar::load_layout().unwrap_or_default().hint();
+            let center = rest.iter().any(|a| a == "--center");
+            let anchor = bar_anchor::anchor(&cfg.bar.namespace, hint, center);
+            ask(&if cmd == "toggle" {
+                Request::Toggle { anchor }
+            } else {
+                Request::Show { anchor }
+            })?;
             Ok(0)
         }
         "now" => print_reply(ask(&Request::Now)?),
@@ -249,12 +264,25 @@ fn wear_cmd(rest: &[String]) -> Result<i32> {
     let care = CareSettings::from_config(&cfg.care);
     let budget = Budget::from_care(&cfg.care);
     let mut failed = 0;
+    let mut cache =
+        layover_core::wear_cache::WearCache::load(&paths::wear_cache()).unwrap_or_default();
+    cache.minutes = minutes;
     for hack in hacks {
         let report = wear::run(&gpu, hack, &care, minutes * 60, [256, 72], wear::G9_CANVAS)?;
         let png = out.join(format!("{}.png", hack.id));
         report.write_heat_png(&png, 4)?;
         let f = report.failures(&budget);
         println!("{}", report.summary());
+        cache.hacks.retain(|r| r.id != hack.id);
+        cache.hacks.push(layover_core::wear_cache::WearRow {
+            id: hack.id.into(),
+            average: report.average,
+            max_dwell_secs: report.max_dwell_secs,
+            hot_spot: report.hot_spot,
+            share: report.share,
+            peak: report.peak,
+            failures: f.clone(),
+        });
         if f.is_empty() {
             println!("  passes · heat map {}", png.display());
         } else {
@@ -265,5 +293,10 @@ fn wear_cmd(rest: &[String]) -> Result<i32> {
             println!("  heat map {}", png.display());
         }
     }
+    cache.measured_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    cache.save(&paths::wear_cache())?;
     Ok(if failed > 0 { 1 } else { 0 })
 }

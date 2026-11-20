@@ -463,6 +463,7 @@ name = "layover"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bar-anchor",
  "layover-core",
  "layover-hacks",
  "libc",
