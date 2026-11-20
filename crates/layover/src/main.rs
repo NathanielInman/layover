@@ -112,7 +112,7 @@ fn run(args: &[String]) -> Result<i32> {
                 .collect();
             for h in HACKS {
                 let mark = if on.contains(&h.id) { "*" } else { " " };
-                println!("{mark} {:<14} {}", h.id, h.about);
+                println!("{mark} {:<16} {}", h.id, h.about);
             }
             Ok(0)
         }
