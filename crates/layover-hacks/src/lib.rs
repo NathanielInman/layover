@@ -1,5 +1,6 @@
 //! Layover's hacks and the renderer that draws them under rule one.
 
+pub mod board;
 pub mod gpu;
 pub mod renderer;
 pub mod wear;
@@ -17,6 +18,8 @@ pub struct Hack {
     /// Whether the care pass turns its hue. A hack whose colors carry
     /// meaning turns its own neutral colors instead.
     pub hue_turn: bool,
+    /// Reads the Departure Board's cells (the board binding).
+    pub board: bool,
     pub source: &'static str,
 }
 
@@ -27,6 +30,7 @@ pub const HACKS: &[Hack] = &[
         about: "A mail train crosses dark hills while the moon climbs across the sky.",
         text_heavy: false,
         hue_turn: true,
+        board: false,
         source: include_str!("hacks/night-mail.wgsl"),
     },
     Hack {
@@ -35,6 +39,7 @@ pub const HACKS: &[Hack] = &[
         about: "Frost, green and purple curtains over black mountains.",
         text_heavy: false,
         hue_turn: true,
+        board: false,
         source: include_str!("hacks/frost-aurora.wgsl"),
     },
     Hack {
@@ -43,6 +48,7 @@ pub const HACKS: &[Hack] = &[
         about: "Out-of-focus yard lamps drifting in the dark, a few of them blinking.",
         text_heavy: false,
         hue_turn: true,
+        board: false,
         source: include_str!("hacks/signal-lamps.wgsl"),
     },
     Hack {
@@ -51,7 +57,17 @@ pub const HACKS: &[Hack] = &[
         about: "The classic flight through the stars, rebuilt for 32:9.",
         text_heavy: false,
         hue_turn: true,
+        board: false,
         source: include_str!("hacks/starfield.wgsl"),
+    },
+    Hack {
+        id: "departure-board",
+        name: "Departure Board",
+        about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
+        text_heavy: true,
+        hue_turn: false,
+        board: true,
+        source: include_str!("hacks/departure-board.wgsl"),
     },
 ];
 
@@ -125,7 +141,16 @@ mod tests {
         assert_eq!((h.id, fade), (all[0].id, 1.0));
         assert_eq!(showing(&all, &care, 601.0).0.id, all[1].id, "the second hack after 10m");
         assert!(showing(&all, &care, 599.5).1 < 1.0, "fading out before the hand-off");
-        assert_eq!(showing(&all, &care, 4.0 * 600.0 + 60.0).0.id, all[0].id, "and round again");
+        assert_eq!(
+            showing(&all, &care, 4.0 * 600.0 + 60.0).0.id,
+            "departure-board",
+            "the text-heavy board after four hacks"
+        );
+        assert_eq!(
+            showing(&all, &care, 4.0 * 600.0 + 180.0 + 60.0).0.id,
+            all[0].id,
+            "and round again after the board's 3m (care.text_rotate)"
+        );
     }
 
     #[test]

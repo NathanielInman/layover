@@ -166,6 +166,9 @@ pub fn run(
     renderer.resize(canvas, size);
     renderer.reset_limiter();
     renderer.prepare(hack)?;
+    if hack.board {
+        renderer.set_board(&crate::board::BoardData::sample());
+    }
 
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let target = device.create_texture(&wgpu::TextureDescriptor {
@@ -322,6 +325,7 @@ mod tests {
         about: "A bright patch that never moves, like a clock left on screen.",
         text_heavy: false,
         hue_turn: false,
+        board: false,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6); return vec3<f32>(on * 0.9); }",
     };
 
@@ -331,6 +335,7 @@ mod tests {
         about: "Every pixel full white, changing.",
         text_heavy: false,
         hue_turn: true,
+        board: false,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { return vec3<f32>(0.8 + 0.2 * sin(t * 3.0 + p.x * 40.0)); }",
     };
 

@@ -3,6 +3,7 @@
 //! this file only feeds them.
 
 use crate::Hack;
+use crate::board::BoardData;
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use layover_core::config::Care;
@@ -115,6 +116,24 @@ struct CareU {
 }
 
 const PRELUDE: &str = include_str!("hacks/prelude.wgsl");
+
+/// The board binding, for hacks with `board: true`.
+const BOARD_BINDING: &str = r#"
+struct Board {
+    cols: u32,
+    rows: u32,
+    shown: u32,
+    pad: u32,
+    changed: array<vec4<f32>, 3>,
+    cells: array<u32, CELLS>,
+};
+
+@group(1) @binding(0) var<storage, read> board: Board;
+
+fn board_changed(i: u32) -> f32 {
+    return board.changed[i / 4u][i % 4u];
+}
+"#;
 const HACK_MAIN: &str = r#"
 @fragment
 fn fs_hack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
@@ -146,6 +165,12 @@ pub struct Renderer {
     offscreen: Option<Offscreen>,
     hack_layout: wgpu::PipelineLayout,
     hack_bg: wgpu::BindGroup,
+    /// Hacks that read the Departure Board's cells get a second group.
+    board_layout: wgpu::PipelineLayout,
+    board_buf: wgpu::Buffer,
+    board_bg: wgpu::BindGroup,
+    /// Cheap mode dims everything by this (1 otherwise).
+    dim: f32,
     hack_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
     globals: wgpu::Buffer,
     limit: wgpu::Buffer,
@@ -240,6 +265,34 @@ impl Renderer {
             bind_group_layouts: &[Some(&hack_bgl)],
             immediate_size: 0,
         });
+        let board_buf = buffer(
+            device,
+            "board",
+            size_of::<BoardData>() as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        queue.write_buffer(
+            &board_buf,
+            0,
+            bytemuck::bytes_of(&BoardData::compose(&[], &[], "", &[])),
+        );
+        let board_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("board"),
+            entries: &[storage_entry(0, frag, true)],
+        });
+        let board_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("board"),
+            layout: &board_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: board_buf.as_entire_binding(),
+            }],
+        });
+        let board_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("board hack"),
+            bind_group_layouts: &[Some(&hack_bgl), Some(&board_bgl)],
+            immediate_size: 0,
+        });
 
         let limit = buffer(device, "limit", size_of::<Limit>() as u64, uni);
         let gain = buffer(
@@ -316,6 +369,10 @@ impl Renderer {
             offscreen: None,
             hack_layout,
             hack_bg,
+            board_layout,
+            board_buf,
+            board_bg,
+            dim: 1.0,
             hack_pipes: HashMap::new(),
             globals,
             limit,
@@ -379,14 +436,23 @@ impl Renderer {
             return Ok(());
         }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let source = format!("{PRELUDE}\n{}\n{HACK_MAIN}", hack.source);
+        let board = if hack.board {
+            format!(
+                "{}\n{}",
+                BOARD_BINDING.replace("CELLS", &crate::board::CELLS.to_string()),
+                crate::board::font_wgsl()
+            )
+        } else {
+            String::new()
+        };
+        let source = format!("{PRELUDE}\n{board}\n{}\n{HACK_MAIN}", hack.source);
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(hack.id),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let pipe = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(hack.id),
-            layout: Some(&self.hack_layout),
+            layout: Some(if hack.board { &self.board_layout } else { &self.hack_layout }),
             vertex: wgpu::VertexState {
                 module: &module,
                 entry_point: Some("vs"),
@@ -429,7 +495,7 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let limit = Limit {
-            drive: self.care.drive,
+            drive: self.care.drive * self.dim,
             max_average: self.care.max_average,
             dt: frame.dt.max(0.0),
             _pad: 0.0,
@@ -457,6 +523,9 @@ impl Renderer {
             });
             pass.set_pipeline(&self.hack_pipes[frame.hack.id]);
             pass.set_bind_group(0, &self.hack_bg, &[]);
+            if frame.hack.board {
+                pass.set_bind_group(1, &self.board_bg, &[]);
+            }
             pass.draw(0..3, 0..1);
         }
         {
@@ -472,6 +541,16 @@ impl Renderer {
     }
 
     /// Forget the limiter's gain, for a new run.
+    /// Hand the Departure Board its cells.
+    pub fn set_board(&self, data: &BoardData) {
+        self.queue.write_buffer(&self.board_buf, 0, bytemuck::bytes_of(data));
+    }
+
+    /// Dim every frame by `dim` (cheap mode), 1 for full drive.
+    pub fn set_dim(&mut self, dim: f32) {
+        self.dim = dim.clamp(0.1, 1.0);
+    }
+
     pub fn reset_limiter(&self) {
         self.queue.write_buffer(&self.gain, 0, bytemuck::bytes_of(&[0.0f32, 0.0f32]));
     }
@@ -551,7 +630,7 @@ impl Renderer {
                 place.rect[2] / place.px[0].max(1) as f32,
                 place.rect[3] / place.px[1].max(1) as f32,
             ],
-            drive: self.care.drive,
+            drive: self.care.drive * self.dim,
             white: self.care.white,
             hue: self.hue,
             hue_on: if self.hue_on { 1.0 } else { 0.0 },
