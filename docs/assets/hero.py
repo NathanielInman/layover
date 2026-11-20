@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Writes docs/assets/hero.svg: the README's animated hero.
 
-An 18 second loop on the same desktop as Roundhouse's, Switchyard's,
+A 22 second loop on the same desktop as Roundhouse's, Switchyard's,
 Tannoy's and Tablet's heroes, under the floating Platform bar. A terminal
 shows `layover wear`: every hack passing rule one, with the numbers the
-wear test really measures. The desk goes quiet, the clock jumps fifteen
+wear test really measures. A click on the moon springs the drawer out of
+it: Now with the idle line, Hacks with the same wear numbers, History with
+what the line did and why, and a click outside closes it. The desk goes
+quiet, the clock jumps fifteen
 minutes and the saver fades in over everything, the bar too: Night Mail's
 train crosses the hills under a moon that climbs across the sky, then the
 saver hands off through black to Signal Lamps. A nudge of the mouse ends it
 at once. `layover hold 1h` turns Layover's lamp amber, and its tooltip says
 why; `layover release` turns it dim again.
 
-The hacks here are sketches of the WGSL ones, kept as dim as the care pass
+The drawer is drawn by `draw_drawer()` in its own coordinates at its real
+size (420 px wide, as `drawer.width` defaults), one tab at a time, so the
+desktop tour in dot-files can port it. The hacks here are sketches of the WGSL ones, kept as dim as the care pass
 keeps the real ones. Pure CSS animation inside the SVG, so GitHub plays it
 in an <img>. With reduced motion it is a still of Night Mail.
 
@@ -23,7 +28,7 @@ import random
 from pathlib import Path
 
 W, H = 1200, 660
-T = 18  # loop seconds
+T = 22  # loop seconds
 
 # Nord, matching the Platform waybar and the siblings' heroes.
 BG0, BG1 = "#14171c", "#0d0f12"
@@ -38,7 +43,11 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
     "passing rule one: Night Mail, Frost Aurora, Signal Lamps and Starfield with their average level, longest "
-    "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. The desk goes quiet, the clock jumps "
+    "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
+    "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
+    "to start the saver or hold; the Hacks tab lists the four hacks with the same wear numbers, each passing and "
+    "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
+    "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
     "windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll "
     "past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of "
@@ -67,17 +76,184 @@ def g_speaker(cx, cy, c):
             f'<path d="M{cx + 3},{cy - 3} Q{cx + 5.5},{cy} {cx + 3},{cy + 3} M{cx + 5.5},{cy - 5.5} Q{cx + 10},{cy} {cx + 5.5},{cy + 5.5}" fill="none" stroke="{c}" stroke-width="1.5" stroke-linecap="round"/>')
 
 
+# ---------------------------------------------------------------- the drawer
+# crates/layover-board: drawer.rs builds it, style.css sizes it. Everything
+# below is in the drawer's own coordinates, (0, 0) at the panel's top left.
+
+DRAWER_W, PAD = 420, 14
+IW = DRAWER_W - 2 * PAD
+WELL, TILE, TILE_LINE = "#15171a", "#25282c", "#2f3237"
+SUMMARY = "Saver after 15m · lock with the dark · screens off after 1h"
+# The wear test's numbers, as `layover wear` writes them to wear.json.
+HACK_ROWS = [
+    ("Night Mail", "A mail train crosses dark hills while the moon climbs across the sky.", "2.8%", "8s", "5.7%"),
+    ("Frost Aurora", "Frost, green and purple curtains over black mountains.", "6.6%", "13s", "14.4%"),
+    ("Signal Lamps", "Out-of-focus yard lamps drifting in the dark, a few of them blinking.", "1.5%", "9s", "1.9%"),
+    ("Starfield", "The classic flight through the stars, rebuilt for 32:9.", "0.1%", "2s", "0.3%"),
+]
+HISTORY = [
+    ("14:26:12", "Screens on", "input came back"),
+    ("14:25:40", "Screens off", "1h idle"),
+    ("14:25:40", "Locked", "with the dark"),
+    ("13:40:03", "Saver started", "nothing holds it now"),
+    ("13:39:02", "The saver held", "mpv is keeping the screen on"),
+    ("12:58:31", "Hold released", "you released it"),
+]
+TABS = ["Now", "Hacks", "History"]
+
+
+def wrap(text, size, width):
+    """Lines of `text` that fit `width` at a monospace advance of 0.6em."""
+    per = max(1, int(width / (size * 0.6)))
+    lines, line = [], ""
+    for word in text.split():
+        if line and len(line) + 1 + len(word) > per:
+            lines.append(line)
+            line = word
+        else:
+            line = f"{line} {word}" if line else word
+    return lines + ([line] if line else [])
+
+
+def fit(text, size, width):
+    per = max(1, int(width / (size * 0.6)))
+    return text if len(text) <= per else text[: per - 1].rstrip() + "…"
+
+
+def g_moon(cx, cy, c, s=1.0):
+    """The lamp's glyph, md-weather-night: a crescent."""
+    return (f'<path d="M{cx + 1.5 * s},{cy - 7 * s} A{7 * s},{7 * s} 0 1 0 {cx + 6.5 * s},{cy + 3.2 * s} '
+            f'A{5.6 * s},{5.6 * s} 0 1 1 {cx + 1.5 * s},{cy - 7 * s} Z" fill="{c}"/>')
+
+
+def _button(o, spots, name, x, y, text, primary=False):
+    w = len(text) * 7.2 + 22
+    fill, stroke, color = (FROST, FROST, WELL) if primary else (TILE, TILE_LINE, FG)
+    o.append(f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="26" rx="8" fill="{fill}" stroke="{stroke}"/>')
+    o.append(tx(x + w / 2, y + 17.5, text, 12, color, 700 if primary else 400, "middle"))
+    spots[name] = (x, y, w, 26)
+    return w
+
+
+def _now(o, spots, y):
+    reason = wrap(SUMMARY, 12, IW - 22)
+    h = 11 + 14 + 32 + len(reason) * 17 + 8 + 2 * 40 + 6 + 12 + 26 + 12
+    o.append(f'<rect x="{PAD}" y="{y}" width="{IW}" height="{h}" rx="10" fill="{TILE}" stroke="{TILE_LINE}"/>')
+    x = PAD + 11
+    o.append(tx(x, y + 22, "THE IDLE LINE", 10, DIM, 700, attrs='letter-spacing="1"'))
+    o.append(tx(x, y + 53, "Armed", 24, FG, 700))
+    yy = y + 72
+    for line in reason:
+        o.append(tx(x, yy, line, 12, FG))
+        yy += 17
+    yy += 2
+    cw = (IW - 22 - 6) / 2
+    for i, (name, at) in enumerate([("SAVER", "15m"), ("LOCK", "with the dark"), ("SCREENS OFF", "1h"), ("LOCK SCREEN OFF", "1m")]):
+        bx, by = x + (i % 2) * (cw + 6), yy + (i // 2) * 46
+        o.append(f'<rect x="{bx:.1f}" y="{by}" width="{cw:.1f}" height="40" rx="8" fill="{WELL}"/>')
+        o.append(tx(bx + 8, by + 15, name, 10, DIM, 700, attrs='letter-spacing="1"'))
+        o.append(tx(bx + 8, by + 32, at, 12.5, FG, 700))
+    yy += 2 * 46 + 4
+    bw = _button(o, spots, "now:start", x, yy, "Start saver now", primary=True)
+    _button(o, spots, "now:hold", x + bw + 6, yy, "Hold 1h")
+    return y + h
+
+
+def _hacks(o, spots, y):
+    o.append(tx(PAD, y + 12, "WEAR TEST", 10, DIM, 700, attrs='letter-spacing="1"'))
+    o.append(tx(PAD, y + 29, "60 min a hack, measured 14:02", 13, DIM))
+    w = len("Measure") * 7.2 + 22
+    _button(o, spots, "hacks:measure", PAD + IW - w, y + 4, "Measure")
+    y += 42
+    for name, about, avg, dwell, hot in HACK_ROWS:
+        lines = wrap(about, 11.5, IW - 22)
+        h = 10 + 18 + len(lines) * 15 + 34 + 6
+        o.append(f'<rect x="{PAD}" y="{y}" width="{IW}" height="{h}" rx="10" fill="{TILE}" stroke="{TILE_LINE}"/>')
+        x = PAD + 11
+        o.append(tx(x, y + 23, name, 13.5, FG, 700))
+        cw = len("in rotation") * 6.3 + 14
+        cx = PAD + IW - 11 - cw
+        o.append(f'<rect x="{cx:.1f}" y="{y + 11}" width="{cw:.1f}" height="17" rx="8.5" fill="{FROST}" fill-opacity=".13"/>')
+        o.append(tx(cx + cw / 2, y + 23.5, "in rotation", 10.5, FROST, 700, "middle"))
+        yy = y + 41
+        for line in lines:
+            o.append(tx(x, yy, line, 11.5, DIM))
+            yy += 15
+        o.append(tx(x, yy + 13, f"avg {avg} · dwell {dwell} · hottest {hot}", 11, FG))
+        pw = len("Preview") * 7.2 + 22
+        _button(o, spots, f"hacks:preview:{name}", PAD + IW - 11 - pw, yy - 4, "Preview")
+        o.append(tx(PAD + IW - 11 - pw - 10, yy + 13, "passes", 11, GO, 700, "end"))
+        y += h + 10
+    return y - 10
+
+
+def _history(o, spots, y):
+    rows = len(HISTORY)
+    h = 12 + rows * 38 + 2
+    o.append(f'<rect x="{PAD}" y="{y}" width="{IW}" height="{h}" rx="10" fill="{TILE}" stroke="{TILE_LINE}"/>')
+    yy = y + 24
+    for t, what, why in HISTORY:
+        o.append(tx(PAD + 11, yy, t, 11, DIM))
+        o.append(tx(PAD + 11 + 74, yy, what, 12, FG, 700))
+        o.append(tx(PAD + 11 + 74, yy + 16, why, 11.5, DIM))
+        yy += 38
+    return y + h
+
+
+def draw_drawer(tab):
+    """The drawer on `tab` ("Now", "Hacks" or "History") as SVG in its own
+    coordinates; returns (svg, height, spots), spots being the clickable
+    rectangles by name."""
+    o, spots = [], {}
+    y = 58
+    tw = (IW - 12) / 3
+    for i, name in enumerate(TABS):
+        x = PAD + i * (tw + 6)
+        if name == tab:
+            o.append(f'<rect x="{x:.1f}" y="{y}" width="{tw:.1f}" height="24" rx="7" fill="{FROST}" fill-opacity=".75"/>')
+        o.append(tx(x + tw / 2, y + 16.5, name, 11.5, WELL if name == tab else DIM, 700 if name == tab else 400, "middle"))
+        spots[f"tab:{name.lower()}"] = (x, y, tw, 24)
+    end = {"Now": _now, "Hacks": _hacks, "History": _history}[tab](o, spots, 94)
+    foot = end + 24
+    o.append(tx(PAD, foot, "1-3 tabs · n start now · h hold · r release · Esc close", 10.5, DIM))
+    h = foot + 14
+    head = [f'<rect width="{DRAWER_W}" height="{h}" rx="16" fill="{PANEL}" stroke="{PANEL_LINE}" filter="url(#shadow)"/>',
+            g_moon(PAD + 8, 30, BAR_DIM, 1.1),
+            tx(PAD + 28, 27, "LAYOVER", 12, FG, 700, attrs='letter-spacing="2"'),
+            tx(PAD + 28, 42, fit(SUMMARY, 11, IW - 28 - 70), 11, DIM)]
+    cw = 58
+    head.append(f'<rect x="{PAD + IW - cw}" y="18" width="{cw}" height="20" rx="10" fill="#555b64" fill-opacity=".2"/>')
+    head.append(tx(PAD + IW - cw / 2, 32, "armed", 11, DIM, 700, "middle"))
+    return "".join(head + o), h, spots
+
+
+def center(spot):
+    x, y, w, h = spot
+    return (x + w / 2, y + h / 2)
+
+
+# ---- end of the panel ----
+# dot-files' bar hero (docs/bar/apps.py) runs everything above this line
+# to draw the panel in its own tour, so keep the panel's code above it and
+# the story below it.
+
+
 # ---------------------------------------------------------------- animation
 
 # The story, in seconds.
-QUIET = 2.8  # the clock jumps: fifteen minutes idle
-SAVER = 3.0  # the saver starts fading in (1.5 s, as the real one does)
-HANDOFF = 8.6  # Night Mail fades out
-LAMPS_IN = 9.2  # Signal Lamps fades in
-WAKE = 13.4  # the mouse moves: the saver is gone
-HOLD = 14.2  # `layover hold 1h`
-RELEASE = 16.4  # `layover release`
-RESET = 17.4
+CLICK_LAMP, OPEN = 0.9, 0.98  # a click on the moon
+CLICK_HACKS = 2.6
+CLICK_HISTORY = 4.4
+CLICK_OUT, CLOSED = 6.0, 6.45
+QUIET = 6.9  # the clock jumps: fifteen minutes idle
+SAVER = 7.1  # the saver starts fading in (1.5 s, as the real one does)
+HANDOFF = 12.3  # Night Mail fades out
+LAMPS_IN = 12.9  # Signal Lamps fades in
+WAKE = 16.6  # the mouse moves: the saver is gone
+HOLD = 17.4  # `layover hold 1h`
+RELEASE = 19.6  # `layover release`
+RESET = 20.8
+LAG = 0.1  # a click reaches the daemon and comes back as a snapshot
 
 out, kfs = [], []
 
@@ -128,6 +304,11 @@ def style(*names, extra=""):
 def group(name, shown=True, extra=""):
     """A group that fades by `name`; `shown` is its state in the still."""
     add(f'<g {style(name, extra=extra)} opacity="{1 if shown else 0}">')
+
+
+def press(t):
+    """A button's flash under a click."""
+    return anim("opacity", [(0, 0), (t - 0.01, 0), (t, 1), (t + 0.3, 0), (T, 0)])
 
 
 def slide(spans_pts, still):
@@ -325,10 +506,6 @@ add(f'<circle cx="{cx[2]}" cy="{CY}" r="5.5" fill="none" stroke="{BAR_DIM}" stro
 LAYOVER_X = cx[3]
 
 
-def g_moon(cx, cy, c):
-    """The lamp's glyph, md-weather-night: a crescent."""
-    return (f'<path d="M{cx + 1.5},{cy - 7} A7,7 0 1 0 {cx + 6.5},{cy + 3.2} A5.6,5.6 0 1 1 {cx + 1.5},{cy - 7} Z" fill="{c}"/>')
-
 
 add(g_moon(LAYOVER_X, CY, BAR_DIM))
 group(fade([(HOLD + 0.35, RELEASE + 0.35)], 0.01, 0.01), False)
@@ -356,6 +533,49 @@ add(f'<rect x="{tip_x:.1f}" y="{tip_y}" width="{tip_w:.1f}" height="{tip_h}" rx=
 for i, s in enumerate(TIP):
     add(tx(tip_x + 12, tip_y + 25 + i * 19, s, 12, FG if i == 0 else DIM))
 add("</g>")
+
+
+# ---------------------------------------------------------------- the drawer
+STATES = [
+    ("Now", (0, CLICK_HACKS + LAG)),
+    ("Hacks", (CLICK_HACKS + LAG, CLICK_HISTORY + LAG)),
+    ("History", (CLICK_HISTORY + LAG, T)),
+]
+DRAWN = [(tab, span, *draw_drawer(tab)) for tab, span in STATES]
+DH = max(d[3] for d in DRAWN)
+DX = min(max(10, LAYOVER_X - DRAWER_W / 2), W - 10 - DRAWER_W)
+DY = BAR_Y - 8 - DH
+
+spring = anim("transform", [
+    (0, "translateY(26px) scale(.06)"), (OPEN - 0.01, "translateY(26px) scale(.06)"),
+    (OPEN + 0.10, "translateY(14px) scale(.5)"), (OPEN + 0.20, "translateY(4px) scale(.9)"),
+    (OPEN + 0.30, "translateY(-1px) scale(1.035)"), (OPEN + 0.42, "translateY(0) scale(.988)"),
+    (OPEN + 0.56, "scale(1.006)"), (OPEN + 0.72, "scale(1)"), (CLICK_OUT + 0.08, "scale(1)"),
+    (CLOSED, "translateY(14px) scale(.4)"), (T, "translateY(14px) scale(.4)"),
+])
+show = anim("opacity", [(0, 0), (OPEN - 0.01, 0), (OPEN + 0.12, 0.85), (OPEN + 0.2, 1), (CLICK_OUT + 0.08, 1), (CLOSED, 0), (T, 0)])
+add(f'<g {style(spring, show, extra=f"transform-origin:{LAYOVER_X:.1f}px {BAR_Y}px")} opacity="0"><g transform="translate({DX:.1f},{DY:.1f})">')
+for i, (tab, (start, end), svg, h, spots) in enumerate(DRAWN):
+    group(fade([(start, end + 0.04 if i + 1 < len(DRAWN) else T)], 0.04, 0.01), False)
+    add(f'<g transform="translate(0,{DH - h})">{svg}</g>')
+    add("</g>")
+
+
+def spot(i, name):
+    _, _, _, h, spots = DRAWN[i]
+    x, y = center(spots[name])
+    return (DX + x, DY + DH - h + y)
+
+
+def flash(i, name, t):
+    _, _, _, h, spots = DRAWN[i]
+    x, y, w, hh = spots[name]
+    add(f'<rect x="{x:.1f}" y="{y + DH - h:.1f}" width="{w:.1f}" height="{hh}" rx="7" fill="#fff" fill-opacity=".16" {style(press(t))} opacity="0"/>')
+
+
+flash(0, "tab:hacks", CLICK_HACKS)
+flash(1, "tab:history", CLICK_HISTORY)
+add("</g></g>")
 
 # ---------------------------------------------------------------- the saver
 # An overlay surface: it covers the bar too. Everything in it is dim.
@@ -439,16 +659,27 @@ add("</g>")
 
 home = (430, 330)
 nudged = (468, 352)
+lamp_c = (LAYOVER_X, CY)
+hacks_c = spot(0, "tab:hacks")
+history_c = spot(1, "tab:history")
+outside = (DX - 140, 300)
 
 
 def tr(p):
     return f"translate({p[0] - 3:.1f}px, {p[1] - 4:.1f}px)"
 
 
-k = anim("opacity", [(0, 0), (WAKE - 0.01, 0), (WAKE, 0.9), (WAKE + 0.45, 0), (T, 0)])
-k2 = anim("transform", [(0, "scale(.3)"), (WAKE, "scale(.3)"), (WAKE + 0.45, "scale(1.6)"), (T, "scale(1.6)")])
-add(f'<circle class="a ripple" style="animation-name:{k},{k2};transform-box:fill-box;transform-origin:center" cx="{nudged[0]}" cy="{nudged[1]}" r="18" fill="none" stroke="{FROST}" stroke-width="2.5" opacity="0"/>')
-cur = anim("transform", [(0, tr(home)), (WAKE - 0.15, tr(home)), (WAKE + 0.1, tr(nudged)), (T - 0.4, tr(nudged)), (T, tr(home))])
+for t, (x, y) in [(CLICK_LAMP, lamp_c), (CLICK_HACKS, hacks_c), (CLICK_HISTORY, history_c), (CLICK_OUT, outside), (WAKE, nudged)]:
+    k = anim("opacity", [(0, 0), (t - 0.01, 0), (t, 0.9), (t + 0.45, 0), (T, 0)])
+    k2 = anim("transform", [(0, "scale(.3)"), (t, "scale(.3)"), (t + 0.45, "scale(1.6)"), (T, "scale(1.6)")])
+    add(f'<circle class="a ripple" style="animation-name:{k},{k2};transform-box:fill-box;transform-origin:center" cx="{x:.1f}" cy="{y:.1f}" r="18" fill="none" stroke="{FROST}" stroke-width="2.5" opacity="0"/>')
+cur = anim("transform", [
+    (0, tr(home)), (CLICK_LAMP - 0.2, tr(lamp_c)), (1.6, tr(lamp_c)),
+    (CLICK_HACKS - 0.2, tr(hacks_c)), (3.4, tr(hacks_c)),
+    (CLICK_HISTORY - 0.2, tr(history_c)), (5.2, tr(history_c)),
+    (CLICK_OUT - 0.2, tr(outside)), (CLOSED + 0.1, tr(outside)), (QUIET - 0.1, tr(home)),
+    (WAKE - 0.15, tr(home)), (WAKE + 0.1, tr(nudged)), (T - 0.4, tr(nudged)), (T, tr(home)),
+])
 seen = anim("opacity", [(0, 1), (SAVER + 0.3, 1), (SAVER + 0.5, 0), (WAKE - 0.15, 0), (WAKE - 0.1, 1), (T, 1)])
 add(f'<g id="cursor" class="a" style="animation-name:{cur},{seen};animation-timing-function:cubic-bezier(.45,0,.25,1);transform:{tr(home)}">')
 add('<path d="M0,0 L0,22 L6,17 L10,26 L14,24 L10,15 L18,15 Z" fill="#eceff4" stroke="#1d2024" stroke-width="1.4" stroke-linejoin="round"/>')
