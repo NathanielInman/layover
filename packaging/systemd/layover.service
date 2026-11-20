@@ -1,0 +1,28 @@
+# Starts the Layover daemon with the graphical session, in place of
+# hypridle:
+#
+#   systemctl --user enable --now layover.service
+#
+# For a ~/.local/bin install, copy it to ~/.config/systemd/user/ and set
+# ExecStart=%h/.local/bin/layover daemon.
+
+[Unit]
+Description=Layover: the screensaver's idle line (saver, lock, screens off)
+Documentation=https://github.com/NathanielInman/layover
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/layover daemon
+# Stop only the daemon. The saver asks to die with it, but a lock screen it
+# started must outlive a restart: a session lock without its client leaves
+# the compositor's fallback screen.
+KillMode=process
+Restart=on-failure
+RestartSec=2
+# 75: another daemon holds the socket. One is running; stop trying.
+RestartPreventExitStatus=75
+SuccessExitStatus=75
+
+[Install]
+WantedBy=graphical-session.target

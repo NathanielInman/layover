@@ -31,6 +31,9 @@ pub enum Msg {
 
 const TICK: Duration = Duration::from_secs(5);
 
+/// The exit status when another daemon holds the socket (EX_TEMPFAIL).
+pub const ALREADY_RUNNING: i32 = 75;
+
 struct Daemon {
     cfg: Config,
     model: Model,
@@ -50,7 +53,9 @@ pub fn run(cfg: Config) -> Result<()> {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     if UnixStream::connect(&socket).is_ok() {
-        bail!("a Layover daemon is already running ({})", socket.display());
+        // 75: one daemon is running, so this is not a failure to restart.
+        eprintln!("layover: a daemon is already running ({})", socket.display());
+        std::process::exit(ALREADY_RUNNING);
     }
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket)

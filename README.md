@@ -86,8 +86,11 @@ It needs a Vulkan driver, `pactl` (for the audio and microphone holds) and a
 compositor with `ext-idle-notify-v1`, `wlr-layer-shell` and
 `wlr-output-power-management`.
 
-Start the daemon with your compositor, in place of hypridle. Hyprland
-(0.55+, Lua config):
+Start the daemon with your session, in place of hypridle. With systemd,
+copy `packaging/systemd/layover.service` to `~/.config/systemd/user/`, set
+`ExecStart=%h/.local/bin/layover daemon`, and run
+`systemctl --user enable --now layover.service`. Or from Hyprland (0.55+,
+Lua config):
 
 ```lua
 hl.exec_cmd("~/.local/bin/layover daemon")
