@@ -87,7 +87,7 @@ fn hack(p: vec2<f32>, t: f32) -> vec3<f32> {
     let gy = (fy - 0.1) / 0.8 * 7.0;
     if (glyph_bit(gl, i32(floor(gx)), i32(floor(gy)))) {
         let d = length(fract(vec2<f32>(gx, gy)) - 0.5);
-        let dot = 1.0 - smoothstep(0.3, 0.46, d);
+        let dot = 1.0 - smoothstep(0.36, 0.5, d);
         let h = t * TAU / 360.0;
         let neutral = vec3<f32>(0.6) + 0.12 * vec3<f32>(cos(h), cos(h - 2.094), cos(h + 2.094));
         col = mix(col, tone_color(tone, neutral), dot);
