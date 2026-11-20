@@ -59,6 +59,35 @@ mic = true
 # as music plays.
 audio = "dark"
 
+[feeds]
+# The other tools on the desk, read from the lamp each prints for waybar.
+# They can hold the saver, put it in cheap mode, and fill the Departure
+# Board. Each is the command that prints its lamp; [] turns one off, and a
+# command that isn't installed is skipped. Rows show states and counts
+# only, never song titles, meeting names, secret names or task text.
+timetable = ["timetable", "bar"]
+switchyard = ["yard", "bar"]
+waybill = ["waybill", "bar"]
+signal_box = ["broker", "bar"]
+roundhouse = ["rh", "bar"]
+tablet = ["tablet", "bar"]
+logbook = ["logbook", "bar"]
+tannoy = ["tannoy", "bar"]
+
+# Logbook recording or dictating holds the saver, the lock and the dark.
+hold_on_air = true
+
+# Timetable saying a meeting is soon (its 10 minutes) or starting holds the
+# saver.
+hold_meeting = true
+
+# While Switchyard builds on its main line or Roundhouse warns about heat,
+# the saver draws at half the frame rate, half the size and three quarters
+# of the brightness. Motion keeps its speed, so rule one holds.
+# WARNING: false keeps the saver at full rate while the GPU is needed
+# elsewhere.
+cheap = true
+
 [care]
 # Rule one: every hack wears the panel evenly, gently and briefly.
 # WARNING: these are burn-in limits. Raising any of them, or turning one

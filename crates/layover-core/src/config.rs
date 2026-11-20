@@ -16,6 +16,7 @@ use std::time::Duration;
 pub struct Config {
     pub line: Line,
     pub holds: Holds,
+    pub feeds: Feeds,
     pub care: Care,
     pub power: Power,
     pub saver: Saver,
@@ -105,6 +106,64 @@ impl Default for Holds {
             ignore: vec!["com.t3tools.T3Code".into()],
             mic: true,
             audio: AudioHold::Dark,
+        }
+    }
+}
+
+/// The other tools on the desk, read from their waybar lamps ("The line"
+/// in `docs/design.md`). Each is the command that prints its lamp; an empty
+/// list turns it off, and a command that isn't installed is skipped.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Feeds {
+    pub timetable: Vec<String>,
+    pub switchyard: Vec<String>,
+    pub waybill: Vec<String>,
+    pub signal_box: Vec<String>,
+    pub roundhouse: Vec<String>,
+    pub tablet: Vec<String>,
+    pub logbook: Vec<String>,
+    pub tannoy: Vec<String>,
+    /// Logbook on air holds the saver, the lock and the dark.
+    pub hold_on_air: bool,
+    /// A meeting soon (Timetable) holds the saver.
+    pub hold_meeting: bool,
+    /// A heavy build (Switchyard) or a hot machine (Roundhouse) puts the
+    /// saver in cheap mode.
+    pub cheap: bool,
+}
+
+impl Default for Feeds {
+    fn default() -> Self {
+        let cmd = |p: &str| vec![p.to_string(), "bar".to_string()];
+        Feeds {
+            timetable: cmd("timetable"),
+            switchyard: cmd("yard"),
+            waybill: cmd("waybill"),
+            signal_box: cmd("broker"),
+            roundhouse: cmd("rh"),
+            tablet: cmd("tablet"),
+            logbook: cmd("logbook"),
+            tannoy: cmd("tannoy"),
+            hold_on_air: true,
+            hold_meeting: true,
+            cheap: true,
+        }
+    }
+}
+
+impl Feeds {
+    pub fn command(&self, feed: crate::feeds::Feed) -> &[String] {
+        use crate::feeds::Feed::*;
+        match feed {
+            Timetable => &self.timetable,
+            Switchyard => &self.switchyard,
+            Waybill => &self.waybill,
+            SignalBox => &self.signal_box,
+            Roundhouse => &self.roundhouse,
+            Tablet => &self.tablet,
+            Logbook => &self.logbook,
+            Tannoy => &self.tannoy,
         }
     }
 }
@@ -502,6 +561,15 @@ impl Config {
             });
         }
 
+        if !self.feeds.cheap && d.feeds.cheap {
+            out.push(Loosened {
+                key: "feeds.cheap",
+                value: "false".into(),
+                shipped: "true".into(),
+                concern: Concern::Power,
+                why: "The saver draws at its full rate while a heavy build or a hot machine needs the GPU.",
+            });
+        }
         if self.power.mode == PowerMode::Off {
             out.push(Loosened {
                 key: "power.mode",
