@@ -71,6 +71,8 @@ When a station is reached, the daemon checks what holds it:
 | Inhibitor | Hyprland clients with `inhibitingIdle`, minus `holds.ignore` | saver, lock, dark |
 | Microphone | an uncorked `pactl` source output that is not a level meter | saver, lock, dark |
 | Audio | an uncorked, unmuted `pactl` sink input | `holds.audio`: `"dark"` (default), `"all"` or `"off"` |
+| On air | Logbook recording or dictating (the line), `feeds.hold_on_air` | saver, lock, dark |
+| Meeting soon | Timetable's `soon` or `now` (the line), `feeds.hold_meeting` | saver |
 | Manual | `layover hold <duration>` | saver, lock, dark |
 
 Audio holds only the dark by default: a static desktop while music plays is
@@ -88,6 +90,44 @@ holds at that moment, input resumed, a command, the saver exiting, a tick),
 effects out (start or stop the saver, run the lock, power outputs off or on,
 publish the lamp). Every rule about what the daemon does lives there with a
 test.
+
+## The line
+
+Layover reads the other tools on the desk the way waybar does: it runs each
+one's `bar` command (`[feeds]`: `timetable bar`, `yard bar`, `waybill bar`,
+`broker bar`, `rh bar`, `tablet bar`, `logbook bar`, `tannoy bar`) and reads
+the lamp lines it prints (text, class as a string or a list, tooltip). Each
+feed is a child of the daemon with `PR_SET_PDEATHSIG`, read on its own
+thread, and started again with backoff (2 s doubling to a minute) when it
+ends. A command that isn't installed is skipped and named once in the log;
+`[]` turns a feed off.
+
+`layover-core/src/feeds.rs` turns a lamp into a reading, pure and tested
+against recorded lamps:
+
+| Tool | Read from | Gives |
+| --- | --- | --- |
+| Timetable | `now`, `soon`, `in`, `next`, `focus`, `own`, `free`; minutes from "in 7m" | meeting soon (`soon`, `now`), a row |
+| Switchyard | `building`, `queued` (the main line), `running`, `ok`, `failed`; a count in the text | heavy build, a row |
+| Waybill | "N tasks wait on you" in the tooltip | a row |
+| Signal Box | `asking`, `live` with its count, `ending`, `missed`, `locked` | a row |
+| Roundhouse | `heads-up` or `act` with a heat bullet (°C) in the tooltip | hot, a row |
+| Tablet | `held`, `stale`, `dropped`, `connecting`, `off` | a row |
+| Logbook | `recording`, `dictating` (on air), `mic`, `transcribing` | on air, a row |
+| Tannoy | `playing`, `paused`, `hidden` | a row |
+
+**Privacy.** A row carries states and counts only, in Layover's own words:
+"MEETING IN 7M", "33 TASKS WAIT ON YOU", "AGENT ASKS FOR A KEY". Nothing
+copies free text from a lamp into a row, so song titles, meeting names,
+secret names and task text never reach the screen; a test checks recorded
+lamps for leaks.
+
+**Cheap mode.** While Switchyard builds on its main line or Roundhouse warns
+about heat (and `feeds.cheap` is on), the saver draws at half the frame
+rate, half the render size and three quarters of the drive. Motion keeps its
+speed, so dwell and the wear test are unchanged; only the GPU's share goes
+down. It comes and goes as the line changes, is written to the history, and
+shows in the lamp's tooltip and the drawer.
 
 ## Hacks
 
@@ -115,6 +155,26 @@ Each frame:
 
 Hacks hand off with a fade through black. Text-heavy hacks declare it and use
 `care.text_rotate`.
+
+### The Departure Board
+
+`departure-board` draws the line: a header ("DEPARTURES · THE LINE" and the
+clock) over a row per tool with TIME (when the row last changed), WHAT, FROM
+and STATUS, the last colored by the row's tone (calm, busy, alert, quiet).
+Letters are a 5 × 7 dot-matrix font (`layover-hacks/src/board.rs`) on
+split-flap tiles. A hack with `board: true` gets a second bind group holding
+the cells (`glyph | tone << 8`) and when each row changed; the font is a WGSL
+constant built from the Rust table.
+
+Rule one for text: the board drifts on two unequal periods inside its
+margins, every 8 seconds the rows shift up a slot with a flap, it turns its
+own neutral hue (the care pass leaves `hue_turn` off so the status colors
+keep their meaning), and it hands off after `care.text_rotate`. It passes the
+wear test on sample rows.
+
+The saver gets the rows from the daemon's `line` subscription and uploads
+them only when a row or the clock changes. Without a daemon it says nothing
+is on the line.
 
 ### The wear test
 
@@ -153,6 +213,7 @@ defaults.
   and stops it with SIGTERM; it also exits on its own on any key, button or
   pointer movement past a few pixels.
 - `layover bar`: the waybar module, one JSON line per lamp change.
+- The feeds: each tool's `bar` command, a child of the daemon (the line).
 - `layover-board`: the drawer. The daemon starts it, from next to its own
   binary, the first time one is asked for; it stays resident while hidden.
 - Logs go to `$XDG_STATE_HOME/layover/daemon.log` and `board.log`
@@ -162,8 +223,8 @@ defaults.
 | Crate | Role |
 | --- | --- |
 | `bar-anchor` | Anchoring (Hyprland, sway, niri) and panel placement. A copy of Tannoy's; its `Anchor` JSON stays identical to Roundhouse's, Switchyard's and Tannoy's. |
-| `layover-core` | Config, durations, holds, the state machine and its history, the lamp, the drawer's snapshot, the socket protocol, the waybar reader and the wear cache. No Wayland, no GPU, no UI. |
-| `layover-hacks` | The renderer, the hacks, the rotation schedule and the wear test. |
+| `layover-core` | Config, durations, holds, the line's lamp readings, the state machine and its history, the lamp, the drawer's snapshot, the socket protocol, the waybar reader and the wear cache. No Wayland, no GPU, no UI. |
+| `layover-hacks` | The renderer, the hacks, the Departure Board's font and cells, the rotation schedule and the wear test. |
 | `layover` | The daemon, the saver, the CLI and the waybar module. |
 | `layover-board` | The drawer: GTK4 on `gtk4-layer-shell`, overlay layer, namespace `layover`, keyboard exclusive while open. |
 
@@ -174,8 +235,13 @@ One JSON object per line. Requests: `{"cmd":"status"}`, `{"cmd":"watch"}`
 `{"cmd":"hold","secs":N}`, `{"cmd":"release"}`, `{"cmd":"now"}` (start the
 saver now), `{"cmd":"stop"}`, `{"cmd":"toggle","anchor":A}` and
 `{"cmd":"show","anchor":A}` (open the drawer from the bar, `A` being
-bar-anchor's `Anchor` or absent to center it), and `{"cmd":"board"}`. Replies
+bar-anchor's `Anchor` or absent to center it), `{"cmd":"board"}` and
+`{"cmd":"line"}`. Replies
 are a lamp `{"text","alt","class","tooltip"}` or `{"error"}`.
+
+`line` keeps the connection open for the saver and sends
+`{"rows":[{"what","from","status","tone"}],"cheap":bool}` now and on every
+change.
 
 `board` keeps the connection open for the drawer: a snapshot first, any
 show waiting for a drawer that was starting, then a line per event:

@@ -70,10 +70,36 @@ While a lock screen is up and the screens are on, they turn off after a
 minute: a lock screen doesn't move. Both timings go down to 1 minute or off.
 
 Some things hold the line: a window keeping the screen on (a video), an app
-recording from a microphone (a call), and `layover hold`. Playing audio holds
+recording from a microphone (a call), Logbook on air, a meeting about to
+start on Timetable (the saver only), and `layover hold`. Playing audio holds
 only the dark, so music never leaves a still desktop on the panel: the saver
 runs instead. Idle inhibitors from windows that hold one all the time (T3
 Code's) are ignored.
+
+## The line
+
+Layover reads the other tools on the desk from the lamps they print for
+waybar ([Timetable](https://github.com/NathanielInman/timetable),
+[Switchyard](https://github.com/NathanielInman/switchyard), Waybill,
+[Signal Box](https://github.com/NathanielInman/credential-broker),
+[Roundhouse](https://github.com/NathanielInman/roundhouse),
+[Tablet](https://github.com/NathanielInman/tablet),
+[Logbook](https://github.com/NathanielInman/logbook),
+[Tannoy](https://github.com/NathanielInman/tannoy)). Whichever are
+installed:
+
+- **Hold the saver.** Logbook on air holds everything; a meeting about to
+  start holds the saver.
+- **Cheap mode.** While Switchyard builds on its main line or Roundhouse
+  warns about heat, the saver draws at half rate, half size and three
+  quarters of the brightness, and says so on the lamp.
+- **The Departure Board.** A hack you can read from across the room: a row
+  per tool with its state ("MEETING IN 7M", "33 TASKS WAIT ON YOU", "AGENT
+  ASKS FOR A KEY"). States and counts only: song titles, meeting names,
+  secret names and task text never reach the screen.
+
+`[feeds]` in the config names each tool's command, turns one off with `[]`,
+and turns the holds and cheap mode off.
 
 ## Install
 
@@ -168,6 +194,7 @@ layover wear [<id>...]         run the wear test against your config and write h
 | `frost-aurora` | Frost, green and purple curtains over black mountains. |
 | `signal-lamps` | Out-of-focus yard lamps drifting in the dark, a few of them blinking. |
 | `starfield` | The classic flight through the stars, rebuilt for 32:9. |
+| `departure-board` | Split-flap rows from the other tools on the desk. Text-heavy, so it drifts, flaps and hands off after 3 minutes. |
 
 A hack is one WGSL function, `hack(p, t) -> color`, in
 `crates/layover-hacks/src/hacks/`. The care pass applies rule one after it,

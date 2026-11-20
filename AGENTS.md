@@ -8,12 +8,15 @@ the care pass, the wear test or a default.
 
 - `layover-core`: config and its defaults, durations, the loosened-value
   check, the state machine (`state.rs`: events in, effects out), holds
-  parsing (pactl streams, Hyprland clients), the lamp, the drawer's
+  parsing (pactl streams, Hyprland clients), the line (`feeds.rs`: each
+  tool's waybar lamp read into facts and a board row), the lamp, the drawer's
   snapshot, the socket protocol, the waybar reader and the wear cache.
   No Wayland, no GPU.
 - `layover-hacks`: the renderer (hack pass, limiter, care pass), the hacks
-  as WGSL in `src/hacks/`, and the wear test. No Wayland.
-- `layover`: one binary. The daemon (`daemon.rs`, `wayland.rs`), the saver
+  as WGSL in `src/hacks/`, the Departure Board's font and cells
+  (`board.rs`), and the wear test. No Wayland.
+- `layover`: one binary. The daemon (`daemon.rs`, `wayland.rs`, `feeds.rs`
+  runs each tool's `bar` command), the saver
   (`saver.rs`: overlay surfaces through smithay-client-toolkit), the CLI and
   the waybar module.
 - `bar-anchor`: anchoring (Hyprland, sway, niri) and panel placement, no
@@ -54,6 +57,13 @@ exits without touching the daemon.
   command and the user's own commands.
 - The daemon never blocks on the saver or the lock: both are child processes.
 
+## The line's privacy rule
+
+A Departure Board row carries states and counts only, in Layover's own
+words. Never copy free text (titles, songs, meeting names, secret names,
+task text) from a lamp into a row; `feeds::tests::rows_never_copy_titles`
+checks recorded lamps. Fixtures keep personal text replaced.
+
 ## When behavior changes
 
 Update in the same commit: `docs/design.md` for a new key, station, hold,
@@ -63,4 +73,4 @@ change, then run `python3 docs/assets/hero.py` to rewrite `hero.svg` (never
 edit the SVG by hand).
 
 Commits are conventional, scoped by area: `core`, `state`, `holds`, `hacks`,
-`wear`, `saver`, `daemon`, `cli`, `anchor`, `board`, `docs`, `ci`.
+`wear`, `feeds`, `saver`, `daemon`, `cli`, `anchor`, `board`, `docs`, `ci`.
