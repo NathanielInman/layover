@@ -1,0 +1,149 @@
+/* Layover drawer default theme. With theme.from = "waybar" the bar's own
+   colors and font replace these tokens. Override anything in
+   ~/.config/layover/style.css; redefining an @define-color token recolors
+   everything that uses it. */
+
+@define-color lo_panel rgba(30, 32, 36, 0.97);
+@define-color lo_well #15171a;
+@define-color lo_border #41464e;
+@define-color lo_fg #c5c8c6;
+@define-color lo_dim #7c838e;
+@define-color lo_tile rgba(255, 255, 255, 0.035);
+@define-color lo_tile_border rgba(255, 255, 255, 0.07);
+@define-color lo_tile_hover #33373d;
+@define-color lo_accent #88c0d0;
+@define-color lo_ok #a3be8c;
+@define-color lo_held #ebcb8b;
+@define-color lo_bad #bf616a;
+@define-color lo_idle #555b64;
+
+window.layover {
+  background: transparent;
+  color: @lo_fg;
+  font-family: monospace;
+  font-size: 13px;
+}
+window.layover * { font-family: inherit; }
+
+.panel {
+  background: @lo_panel;
+  border: 1px solid @lo_border;
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.35);
+  padding: 14px;
+}
+
+.dim { color: @lo_dim; }
+.num { font-feature-settings: "tnum"; }
+
+/* ---- the state colors, by the lamp's class ---- */
+.armed, .dark { color: @lo_dim; }
+.held, .loose { color: @lo_held; }
+.saver { color: @lo_accent; }
+
+/* ---- header ---- */
+.lamp { font-size: 15px; }
+.brand { font-weight: bold; letter-spacing: 2px; font-size: 12px; }
+.sub { color: @lo_dim; font-size: 11px; }
+.chip {
+  font-size: 11px;
+  font-weight: bold;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: alpha(@lo_idle, 0.2);
+}
+.chip.held, .chip.loose { background: alpha(@lo_held, 0.15); }
+.chip.saver { background: alpha(@lo_accent, 0.15); }
+
+.notice { color: @lo_dim; font-size: 11px; }
+.notice.error { color: @lo_bad; }
+
+/* ---- tabs ---- */
+.tabs button {
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  box-shadow: none;
+  color: @lo_dim;
+  min-height: 0;
+  padding: 4px 0;
+  font-size: 11.5px;
+}
+.tabs button:hover { background: @lo_tile_hover; color: @lo_fg; }
+.tabs button.on { background: alpha(@lo_accent, 0.75); color: @lo_well; font-weight: bold; }
+
+/* ---- cards ---- */
+.card {
+  background: @lo_tile;
+  border: 1px solid @lo_tile_border;
+  border-radius: 10px;
+  padding: 10px 11px;
+}
+.card.loose { border-color: alpha(@lo_held, 0.45); background: alpha(@lo_held, 0.05); }
+.card.held { border-color: alpha(@lo_held, 0.35); }
+.card.saver { border-color: alpha(@lo_accent, 0.35); }
+/* A card takes its state's border, not its color: only the headline does. */
+.card.held, .card.saver, .card.loose, .card.armed, .card.dark, .card.off { color: @lo_fg; }
+.t-label {
+  color: @lo_dim;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+.card.loose .t-label.head { color: @lo_held; }
+.big { font-size: 24px; font-weight: bold; }
+.big.armed { color: @lo_fg; }
+.reason { font-size: 12px; }
+.key { font-weight: bold; font-size: 12px; }
+.why { color: @lo_dim; font-size: 11.5px; }
+
+/* ---- the idle line ---- */
+.station {
+  background: @lo_well;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.station .name { color: @lo_dim; font-size: 10px; font-weight: bold; letter-spacing: 1px; }
+.station .at { font-weight: bold; font-size: 12.5px; }
+.station.off .at { color: @lo_idle; }
+.rail-line { color: @lo_idle; font-size: 11px; }
+
+/* ---- hacks ---- */
+.hack-name { font-weight: bold; font-size: 13.5px; }
+.about { color: @lo_dim; font-size: 11.5px; }
+.wear { font-size: 11.5px; font-feature-settings: "tnum"; }
+.pass { color: @lo_ok; font-weight: bold; font-size: 11px; }
+.fail { color: @lo_bad; font-weight: bold; font-size: 11px; }
+.rot { font-size: 10.5px; font-weight: bold; padding: 1px 7px; border-radius: 999px; }
+.rot.on { color: @lo_accent; background: alpha(@lo_accent, 0.13); }
+.rot.off { color: @lo_dim; background: alpha(@lo_idle, 0.2); }
+.showing { color: @lo_accent; font-size: 10.5px; font-weight: bold; }
+
+/* ---- history ---- */
+.hist-time { color: @lo_dim; font-size: 11px; font-feature-settings: "tnum"; min-width: 64px; }
+.hist-what { font-weight: bold; font-size: 12px; }
+.hist-why { color: @lo_dim; font-size: 11.5px; }
+
+/* ---- buttons ---- */
+.buttons button {
+  background: @lo_tile;
+  border: 1px solid @lo_tile_border;
+  border-radius: 8px;
+  box-shadow: none;
+  color: @lo_fg;
+  min-height: 0;
+  padding: 4px 11px;
+  font-size: 12px;
+}
+.buttons button:hover { background: @lo_tile_hover; }
+.buttons button:disabled { color: @lo_idle; }
+.buttons button.primary {
+  background: @lo_accent;
+  border-color: @lo_accent;
+  color: @lo_well;
+  font-weight: bold;
+}
+.buttons button.primary:hover { background: shade(@lo_accent, 1.08); }
+.buttons button.primary:disabled { background: @lo_tile; border-color: @lo_tile_border; color: @lo_idle; }
+
+.foot { color: @lo_dim; font-size: 10.5px; }
