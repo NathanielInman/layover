@@ -1,0 +1,28 @@
+[package]
+name = "layover"
+description = "Layover: the daemon, the saver, the CLI and the waybar module"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "layover"
+path = "src/main.rs"
+
+[dependencies]
+layover-core = { path = "../layover-core" }
+layover-hacks = { path = "../layover-hacks" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+libc.workspace = true
+wgpu = { version = "30", default-features = false, features = ["vulkan", "wgsl", "std"] }
+smithay-client-toolkit = { version = "0.21", default-features = false, features = ["calloop"] }
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+raw-window-handle = "0.6"

@@ -21,12 +21,12 @@ fn hack(p: vec2<f32>, t: f32) -> vec3<f32> {
         let fi = f32(i);
         let x = p.x * 0.55 + fi * 1.7 + g.seed;
         let center = 0.5 + 0.1 * fi
-            + 0.12 * sin(x * 1.3 + t * 0.09 + fi)
+            + 0.12 * sin(x * 1.3 + t * 0.14 + fi)
             + 0.07 * (fbm(vec2<f32>(x * 1.6, t * 0.06 + fi * 4.0)) - 0.5);
         let d = p.y - center;
-        let curtain = smoothstep(-0.015, 0.0, d) * exp(-max(d, 0.0) * 5.5);
+        let curtain = smoothstep(-0.07, 0.0, d) * exp(-max(d, 0.0) * 5.5);
         let rays = 0.3 + 0.7 * fbm(vec2<f32>(p.x * 16.0 + fi * 3.0 - t * 0.4, t * 0.25 + fi));
-        let breathe = 0.5 + 0.5 * sin(p.x * 2.3 + t * 0.45 + fi * 2.1);
+        let breathe = 0.5 + 0.5 * sin(p.x * 2.3 + t * 0.6 + fi * 2.1);
         col = col + tint[i] * curtain * rays * breathe * 0.75;
     }
 
