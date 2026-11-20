@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps and Starfield with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the four hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the five hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -90,6 +90,7 @@ HACK_ROWS = [
     ("Frost Aurora", "Frost, green and purple curtains over black mountains.", "6.6%", "13s", "14.4%"),
     ("Signal Lamps", "Out-of-focus yard lamps drifting in the dark, a few of them blinking.", "1.5%", "9s", "1.9%"),
     ("Starfield", "The classic flight through the stars, rebuilt for 32:9.", "0.1%", "2s", "0.3%"),
+    ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
     ("14:26:12", "Screens on", "input came back"),
@@ -200,6 +201,10 @@ def _history(o, spots, y):
     return y + h
 
 
+# The tallest the drawer's body gets in the hero before it scrolls.
+BODY_MAX = 548
+
+
 def draw_drawer(tab):
     """The drawer on `tab` ("Now", "Hacks" or "History") as SVG in its own
     coordinates; returns (svg, height, spots), spots being the clickable
@@ -213,7 +218,16 @@ def draw_drawer(tab):
             o.append(f'<rect x="{x:.1f}" y="{y}" width="{tw:.1f}" height="24" rx="7" fill="{FROST}" fill-opacity=".75"/>')
         o.append(tx(x + tw / 2, y + 16.5, name, 11.5, WELL if name == tab else DIM, 700 if name == tab else 400, "middle"))
         spots[f"tab:{name.lower()}"] = (x, y, tw, 24)
+    body_at = len(o)
     end = {"Now": _now, "Hacks": _hacks, "History": _history}[tab](o, spots, 94)
+    if end > BODY_MAX:
+        # The real drawer caps its height (drawer.max_height) and scrolls;
+        # show the top of the list, clipped as the scroller clips it.
+        cid = f"dclip-{tab.lower()}"
+        o.insert(body_at, f'<clipPath id="{cid}"><rect x="0" y="90" width="{DRAWER_W}" height="{BODY_MAX - 90}"/></clipPath>'
+                 f'<g clip-path="url(#{cid})">')
+        o.append("</g>")
+        end = BODY_MAX
     foot = end + 24
     o.append(tx(PAD, foot, "1-3 tabs · n start now · h hold · r release · Esc close", 10.5, DIM))
     h = foot + 14
@@ -415,16 +429,17 @@ WEAR = [
     ("frost-aurora", "6.6%", "13s", "14.4%"),
     ("signal-lamps", "1.5%", " 9s", " 1.9%"),
     ("starfield", "0.1%", " 2s", " 0.3%"),
+    ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
     y = ty + 24 + i * 21
-    add(tx(TL, y, f"{hack:<13} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
-    add(tx(TL + 54 * 7.5, y, "passes", 12.5, GO, 700))
-term(ty + 24 + 4 * 21 + 4, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
-term(ty + 148, "$ layover hold 1h", FROST, [(HOLD, RESET)])
-term(ty + 169, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
-term(ty + 194, "$ layover release", FROST, [(RELEASE, RESET)])
-term(ty + 215, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
+    add(tx(TL, y, f"{hack:<16} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
+    add(tx(TL + 57 * 7.5, y, "passes", 12.5, GO, 700))
+term(ty + 24 + 5 * 21 + 4, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
+term(ty + 169, "$ layover hold 1h", FROST, [(HOLD, RESET)])
+term(ty + 190, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
+term(ty + 215, "$ layover release", FROST, [(RELEASE, RESET)])
+term(ty + 236, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
 
 # ---------------------------------------------------------------- the bar
 # packages/waybar in dot-files: a floating bar 34 px high, 6 px off the
