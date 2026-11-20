@@ -27,8 +27,14 @@ pub enum Msg {
     Note(String),
     Request(Request, Sender<Reply>),
     Watch(Sender<String>),
-    Board(Sender<String>),
-    SaverExited { pid: u32, status: String },
+    /// A drawer subscribed, with an id for when it goes.
+    Board(u64, Sender<String>),
+    /// A drawer's socket closed.
+    BoardGone(u64),
+    SaverExited {
+        pid: u32,
+        status: String,
+    },
 }
 
 const TICK: Duration = Duration::from_secs(5);
@@ -48,7 +54,7 @@ struct Daemon {
     tx: Sender<Msg>,
     warned_no_power: bool,
     /// Drawers subscribed to snapshots (one, normally).
-    boards: Vec<Sender<String>>,
+    boards: Vec<(u64, Sender<String>)>,
     last_snapshot: String,
     /// A show waiting for a drawer that is starting.
     pending_board: Option<String>,
@@ -192,16 +198,17 @@ impl Daemon {
                     self.watchers.push(sender);
                 }
             }
-            Msg::Board(sender) => {
+            Msg::Board(id, sender) => {
                 let snap = self.snapshot_line();
                 let mut ok = sender.send(snap).is_ok();
                 if let Some(p) = self.pending_board.take() {
                     ok &= sender.send(p).is_ok();
                 }
                 if ok {
-                    self.boards.push(sender);
+                    self.boards.push((id, sender));
                 }
             }
+            Msg::BoardGone(id) => self.boards.retain(|(b, _)| *b != id),
             Msg::SaverExited { pid, status } => {
                 if self.saver_pid == Some(pid) {
                     self.saver_pid = None;
@@ -332,7 +339,7 @@ impl Daemon {
         if !self.boards.is_empty() {
             let snap = self.snapshot_line();
             if snap != self.last_snapshot {
-                self.boards.retain(|b| b.send(snap.clone()).is_ok());
+                self.boards.retain(|(_, b)| b.send(snap.clone()).is_ok());
                 self.last_snapshot = snap;
             }
         }
@@ -364,7 +371,7 @@ impl Daemon {
     /// connected.
     fn send_board(&mut self, ev: BoardEvent) {
         let line = serde_json::to_string(&ev).expect("an event is plain data");
-        self.boards.retain(|b| b.send(line.clone()).is_ok());
+        self.boards.retain(|(_, b)| b.send(line.clone()).is_ok());
         if !self.boards.is_empty() {
             return;
         }
@@ -532,7 +539,22 @@ fn serve_client(stream: UnixStream, tx: Sender<Msg>) -> Result<()> {
         };
         if req == Request::Watch || req == Request::Board {
             let (wtx, wrx) = mpsc::channel();
-            tx.send(if req == Request::Watch { Msg::Watch(wtx) } else { Msg::Board(wtx) })?;
+            if req == Request::Watch {
+                tx.send(Msg::Watch(wtx))?;
+            } else {
+                // A subscriber that closed its socket must go at once: a
+                // toggle handed to it would be lost until a write failed.
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tx.send(Msg::Board(id, wtx))?;
+                let mut probe = writer.try_clone()?;
+                let gone = tx.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 256];
+                    while matches!(probe.read(&mut buf), Ok(n) if n > 0) {}
+                    let _ = gone.send(Msg::BoardGone(id));
+                });
+            }
             for lamp in wrx {
                 writeln!(writer, "{lamp}")?;
                 writer.flush()?;
