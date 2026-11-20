@@ -1,0 +1,41 @@
+[
+  {
+    "index": 3120,
+    "driver": "PipeWire",
+    "owner_module": "",
+    "client": "4120",
+    "source": 73,
+    "sample_specification": "s16le 1ch 48000Hz",
+    "channel_map": "mono",
+    "format": "pcm, format.sample_format = \"\\\"s16le\\\"\"  format.rate = \"48000\"  format.channels = \"1\"",
+    "corked": false,
+    "mute": false,
+    "properties": {
+      "application.name": "Google Chrome",
+      "application.process.binary": "chrome",
+      "media.class": "Stream/Input/Audio",
+      "media.name": "RecordStream",
+      "node.name": "Google Chrome input"
+    }
+  },
+  {
+    "index": 3121,
+    "driver": "PipeWire",
+    "owner_module": "",
+    "client": "4130",
+    "source": 86,
+    "sample_specification": "float32le 1ch 25Hz",
+    "channel_map": "mono",
+    "format": "pcm",
+    "corked": false,
+    "mute": false,
+    "properties": {
+      "application.name": "PulseAudio Volume Control",
+      "application.id": "org.PulseAudio.pavucontrol",
+      "media.class": "Stream/Input/Audio",
+      "media.name": "Peak detect",
+      "stream.monitor": "true",
+      "node.name": "PulseAudio Volume Control"
+    }
+  }
+]

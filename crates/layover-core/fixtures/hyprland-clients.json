@@ -1,0 +1,92 @@
+[
+  {
+    "class": "neovide",
+    "initialClass": "neovide",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "io.github.nathanielinman.Waybill",
+    "initialClass": "io.github.nathanielinman.Waybill",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "discord",
+    "initialClass": "discord",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "google-chrome",
+    "initialClass": "google-chrome",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "com.t3tools.T3Code",
+    "initialClass": "com.t3tools.T3Code",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "google-chrome",
+    "initialClass": "google-chrome",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "slack",
+    "initialClass": "slack",
+    "title": "(title removed)",
+    "inhibitingIdle": false,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  },
+  {
+    "class": "mpv",
+    "initialClass": "mpv",
+    "title": "(title removed)",
+    "inhibitingIdle": true,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 2,
+    "pid": 1000
+  },
+  {
+    "class": "com.t3tools.T3Code",
+    "initialClass": "com.t3tools.T3Code",
+    "title": "(title removed)",
+    "inhibitingIdle": true,
+    "mapped": true,
+    "hidden": false,
+    "fullscreen": 0,
+    "pid": 1000
+  }
+]
