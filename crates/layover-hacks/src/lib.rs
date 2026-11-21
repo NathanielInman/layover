@@ -87,6 +87,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/quasi-lattice.wgsl"),
     },
     Hack {
+        id: "ripple-tank",
+        name: "Ripple Tank",
+        about: "Rings from drifting sources cross into shifting interference bands (after Interference by Hannu Mallat).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/ripple-tank.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
