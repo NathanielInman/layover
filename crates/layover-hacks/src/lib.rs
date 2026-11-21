@@ -20,6 +20,8 @@ pub struct Hack {
     pub hue_turn: bool,
     /// Reads the Departure Board's cells (the board binding).
     pub board: bool,
+    /// Uses the Tier R raymarch helpers (`rm_march`, `rm_normal`, `rm_ao`, `rm_shadow`).
+    pub raymarch: bool,
     pub source: &'static str,
 }
 
@@ -31,6 +33,7 @@ pub const HACKS: &[Hack] = &[
         text_heavy: false,
         hue_turn: true,
         board: false,
+        raymarch: false,
         source: include_str!("hacks/night-mail.wgsl"),
     },
     Hack {
@@ -40,6 +43,7 @@ pub const HACKS: &[Hack] = &[
         text_heavy: false,
         hue_turn: true,
         board: false,
+        raymarch: false,
         source: include_str!("hacks/frost-aurora.wgsl"),
     },
     Hack {
@@ -49,6 +53,7 @@ pub const HACKS: &[Hack] = &[
         text_heavy: false,
         hue_turn: true,
         board: false,
+        raymarch: false,
         source: include_str!("hacks/signal-lamps.wgsl"),
     },
     Hack {
@@ -58,6 +63,7 @@ pub const HACKS: &[Hack] = &[
         text_heavy: false,
         hue_turn: true,
         board: false,
+        raymarch: false,
         source: include_str!("hacks/starfield.wgsl"),
     },
     Hack {
@@ -67,6 +73,7 @@ pub const HACKS: &[Hack] = &[
         text_heavy: true,
         hue_turn: false,
         board: true,
+        raymarch: false,
         source: include_str!("hacks/departure-board.wgsl"),
     },
 ];
@@ -136,18 +143,19 @@ mod tests {
     fn hacks_take_turns_and_fade_through_black() {
         let care = layover_core::config::Care::default();
         let all = rotation(&[]).unwrap();
+        let before_board = all.iter().take_while(|h| !h.text_heavy).count() as f32;
         assert_eq!(showing(&all, &care, 0.0).1, 0.0, "a run fades in");
         let (h, fade) = showing(&all, &care, 60.0);
         assert_eq!((h.id, fade), (all[0].id, 1.0));
         assert_eq!(showing(&all, &care, 601.0).0.id, all[1].id, "the second hack after 10m");
         assert!(showing(&all, &care, 599.5).1 < 1.0, "fading out before the hand-off");
         assert_eq!(
-            showing(&all, &care, 4.0 * 600.0 + 60.0).0.id,
+            showing(&all, &care, before_board * 600.0 + 60.0).0.id,
             "departure-board",
-            "the text-heavy board after four hacks"
+            "the text-heavy board after the non-text hacks"
         );
         assert_eq!(
-            showing(&all, &care, 4.0 * 600.0 + 180.0 + 60.0).0.id,
+            showing(&all, &care, before_board * 600.0 + 180.0 + 60.0).0.id,
             all[0].id,
             "and round again after the board's 3m (care.text_rotate)"
         );

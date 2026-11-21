@@ -25,7 +25,7 @@ below names what the renderer would gain to cover it.
 | tier | needs | status |
 |------|-------|--------|
 | F | a fragment shader | works today |
-| R | raymarching helpers in the prelude (SDFs, normals, soft light) | small addition |
+| R | raymarching helpers in the prelude (SDFs, normals, soft light) | works today |
 | S | state: ping-pong feedback textures that persist between frames | engine task |
 | P | particles: storage buffers and a compute pass | engine task |
 | L | lines and shapes: instanced quads with SDF edges | engine task |

@@ -141,7 +141,9 @@ fn hack(p: vec2<f32>, t: f32) -> vec3<f32>
 bottom to 1 at the top and `x` from 0 to the canvas aspect. The canvas is the
 bounding box of every output, so a G9 split into two outputs gets one 32:9
 picture. `t` is seconds since the saver started. The prelude
-(`hacks/prelude.wgsl`) has the uniforms, hashes and noise.
+(`hacks/prelude.wgsl`) has the uniforms, hashes, noise and 3D SDF primitives;
+a hack with `raymarch: true` also gets `hacks/raymarch.wgsl` (sphere tracing,
+tetrahedron normals, ambient occlusion and soft shadows over its `sdf(p, t)`).
 
 Each frame:
 

@@ -116,6 +116,7 @@ struct CareU {
 }
 
 const PRELUDE: &str = include_str!("hacks/prelude.wgsl");
+const RAYMARCH: &str = include_str!("hacks/raymarch.wgsl");
 
 /// The board binding, for hacks with `board: true`.
 const BOARD_BINDING: &str = r#"
@@ -445,7 +446,8 @@ impl Renderer {
         } else {
             String::new()
         };
-        let source = format!("{PRELUDE}\n{board}\n{}\n{HACK_MAIN}", hack.source);
+        let raymarch = if hack.raymarch { RAYMARCH } else { "" };
+        let source = format!("{PRELUDE}\n{raymarch}\n{board}\n{}\n{HACK_MAIN}", hack.source);
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(hack.id),
             source: wgpu::ShaderSource::Wgsl(source.into()),

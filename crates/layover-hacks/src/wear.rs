@@ -326,6 +326,7 @@ mod tests {
         text_heavy: false,
         hue_turn: false,
         board: false,
+        raymarch: false,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6); return vec3<f32>(on * 0.9); }",
     };
 
@@ -336,6 +337,7 @@ mod tests {
         text_heavy: false,
         hue_turn: true,
         board: false,
+        raymarch: false,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { return vec3<f32>(0.8 + 0.2 * sin(t * 3.0 + p.x * 40.0)); }",
     };
 
