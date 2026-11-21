@@ -77,6 +77,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/menger-vault.wgsl"),
     },
     Hack {
+        id: "quasi-lattice",
+        name: "Quasi Lattice",
+        about: "Shifting aperiodic crystal tilings from interfering plane waves (after Quasicrystal by Jamie Zawinski).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/quasi-lattice.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
