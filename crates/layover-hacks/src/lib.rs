@@ -67,6 +67,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/starfield.wgsl"),
     },
     Hack {
+        id: "menger-vault",
+        name: "Menger Vault",
+        about: "An endless vaulted Menger sponge curving through the dark (after Menger by Jamie Zawinski).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: true,
+        source: include_str!("hacks/menger-vault.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",

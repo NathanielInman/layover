@@ -5,7 +5,7 @@
 <h1 align="center">Layover</h1>
 
 <p align="center">
-  <img src="docs/assets/hero.svg" width="100%" alt="A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack passing rule one: Night Mail, Frost Aurora, Signal Lamps and Starfield with their average level, longest lit dwell and hottest area. Layover&#x27;s lamp in the bar is a dim moon. A click on it springs the drawer out: the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons to start the saver or hold; the Hacks tab lists the four hacks with the same wear numbers, each passing and in the rotation with a Preview button; the History tab lists what the line did and why. A click outside closes it. The desk goes quiet, the clock jumps from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of focus. The mouse moves and the saver is gone at once. In the terminal layover hold 1h turns the lamp amber, its tooltip says held by you for 1h more, and layover release turns it dim again.">
+  <img src="docs/assets/hero.svg" width="100%" alt="A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault and the Departure Board with their average level, longest lit dwell and hottest area. Layover&#x27;s lamp in the bar is a dim moon. A click on it springs the drawer out: the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons to start the saver or hold; the Hacks tab lists the six hacks with the same wear numbers, each passing and in the rotation with a Preview button; the History tab lists what the line did and why. A click outside closes it. The desk goes quiet, the clock jumps from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of focus. The mouse moves and the saver is gone at once. In the terminal layover hold 1h turns the lamp amber, its tooltip says held by you for 1h more, and layover release turns it dim again.">
 </p>
 
 <p align="center">
@@ -194,6 +194,7 @@ layover wear [<id>...]         run the wear test against your config and write h
 | `frost-aurora` | Frost, green and purple curtains over black mountains. |
 | `signal-lamps` | Out-of-focus yard lamps drifting in the dark, a few of them blinking. |
 | `starfield` | The classic flight through the stars, rebuilt for 32:9. |
+| `menger-vault` | An endless vaulted Menger sponge curving through the dark (after Menger by Jamie Zawinski). |
 | `departure-board` | Split-flap rows from the other tools on the desk. Text-heavy, so it drifts, flaps and hands off after 3 minutes. |
 
 A hack is one WGSL function, `hack(p, t) -> color`, in

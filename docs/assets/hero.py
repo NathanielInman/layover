@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the five hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the six hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -90,6 +90,7 @@ HACK_ROWS = [
     ("Frost Aurora", "Frost, green and purple curtains over black mountains.", "6.6%", "13s", "14.4%"),
     ("Signal Lamps", "Out-of-focus yard lamps drifting in the dark, a few of them blinking.", "1.5%", "9s", "1.9%"),
     ("Starfield", "The classic flight through the stars, rebuilt for 32:9.", "0.1%", "2s", "0.3%"),
+    ("Menger Vault", "An endless vaulted Menger sponge curving through the dark (after Menger by Jamie Zawinski).", "7.7%", "8s", "11.9%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -429,17 +430,19 @@ WEAR = [
     ("frost-aurora", "6.6%", "13s", "14.4%"),
     ("signal-lamps", "1.5%", " 9s", " 1.9%"),
     ("starfield", "0.1%", " 2s", " 0.3%"),
+    ("menger-vault", "7.7%", " 8s", "11.9%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
     y = ty + 24 + i * 21
     add(tx(TL, y, f"{hack:<16} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
     add(tx(TL + 57 * 7.5, y, "passes", 12.5, GO, 700))
-term(ty + 24 + 5 * 21 + 4, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
-term(ty + 169, "$ layover hold 1h", FROST, [(HOLD, RESET)])
-term(ty + 190, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
-term(ty + 215, "$ layover release", FROST, [(RELEASE, RESET)])
-term(ty + 236, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
+by = ty + 24 + len(WEAR) * 21 + 4
+term(by, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
+term(by + 36, "$ layover hold 1h", FROST, [(HOLD, RESET)])
+term(by + 57, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
+term(by + 82, "$ layover release", FROST, [(RELEASE, RESET)])
+term(by + 103, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
 
 # ---------------------------------------------------------------- the bar
 # packages/waybar in dot-files: a floating bar 34 px high, 6 px off the
