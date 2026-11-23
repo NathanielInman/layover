@@ -123,7 +123,11 @@ hl.exec_cmd("~/.local/bin/layover daemon")
 ```
 
 Then add the lamp to waybar from `packaging/examples/waybar-modules.jsonc`
-and `packaging/examples/waybar-style.css`.
+and `packaging/examples/waybar-style.css`, and run `layover doctor`. It
+checks the config, the daemon and `layover.service`, the three Wayland
+protocols, the Vulkan adapter, `pactl`, Hyprland's socket, the lock command,
+the feeds, the waybar module and the drawer with its libraries, and exits 1
+when something is broken.
 
 ## Locking, and a YubiKey on the lock screen
 
@@ -180,6 +184,7 @@ layover status                 what the idle line is doing, and why
 layover now | stop             start or stop the saver
 layover hold 1h | release      hold the line, or end the hold
 layover check                  check the config and list loosened values
+layover doctor                 check the setup (exits 1 when something is broken)
 layover hacks                  list the hacks
 layover saver --hack starfield --for 20s
                                show a hack now, without the daemon

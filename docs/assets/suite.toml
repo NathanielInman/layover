@@ -29,4 +29,6 @@ install = [
   "systemctl --user enable --now layover.service",
 ]
 # Run after installing (and stowing) to check the setup.
-check = []
+check = [
+  "layover doctor",
+]

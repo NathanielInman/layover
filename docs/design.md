@@ -215,6 +215,13 @@ defaults.
   and stops it with SIGTERM; it also exits on its own on any key, button or
   pointer movement past a few pixels.
 - `layover bar`: the waybar module, one JSON line per lamp change.
+- `layover doctor`: one `ok`, `fail` or `info` line per check: the config
+  and its hacks, the daemon (a `status` request) and `layover.service`, the
+  compositor's `ext_idle_notifier_v1`, `zwlr_layer_shell_v1` and
+  `zwlr_output_power_manager_v1` (or `line.dark_command`), a Vulkan adapter,
+  `pactl`, Hyprland's socket when `holds.inhibitors` is on, the lock and dark
+  commands, the feeds, the waybar module, `layover-board` and GTK 4 with
+  gtk4-layer-shell. It changes nothing and exits 1 when a check fails.
 - The feeds: each tool's `bar` command, a child of the daemon (the line).
 - `layover-board`: the drawer. The daemon starts it, from next to its own
   binary, the first time one is asked for; it stays resident while hidden.

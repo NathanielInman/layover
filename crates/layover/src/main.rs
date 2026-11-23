@@ -1,6 +1,7 @@
 //! `layover`: the daemon, the saver, the waybar module and the CLI.
 
 mod daemon;
+mod doctor;
 mod feeds;
 mod log;
 mod saver;
@@ -33,6 +34,8 @@ Usage:
   layover hold <duration>        hold the saver, the lock and the dark (\"1h\", \"30m\")
   layover release                end a hold
   layover check                  check the config and list every value looser than shipped
+  layover doctor                 check the setup: the daemon, the compositor, Vulkan,
+                                 pactl, the lock, waybar and the drawer
   layover hacks                  list the hacks
   layover saver [--hack <id>]... [--for <duration>]
                                  show hacks now, without the daemon
@@ -103,6 +106,13 @@ fn run(args: &[String]) -> Result<i32> {
             print_reply(ask(&Request::Hold { secs })?)
         }
         "check" => check(),
+        "doctor" => {
+            let checks = doctor::checks();
+            for c in &checks {
+                println!("{}", c.line());
+            }
+            Ok(if layover_core::doctor::failed(&checks) { 1 } else { 0 })
+        }
         "hacks" => {
             let cfg = load_config().unwrap_or_default();
             let on: Vec<&str> = layover_hacks::rotation(&cfg.saver.hacks)

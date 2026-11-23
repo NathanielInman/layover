@@ -45,7 +45,7 @@ fn executable(p: &Path) -> bool {
 
 /// A program by path (`~/` allowed) or by name on `PATH`, then the places a
 /// user service's `PATH` often lacks.
-fn resolve(prog: &str) -> Option<PathBuf> {
+pub(crate) fn resolve(prog: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     if let Some(rest) = prog.strip_prefix("~/") {
         let p = home.join(rest);

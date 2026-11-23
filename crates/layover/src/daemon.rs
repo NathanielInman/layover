@@ -520,7 +520,7 @@ fn spawn_detached(cmd: &[String], what: &str) {
 }
 
 /// Ask Hyprland's socket. None when not under Hyprland or it doesn't answer.
-fn hyprland_request(req: &str) -> Option<String> {
+pub(crate) fn hyprland_request(req: &str) -> Option<String> {
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     let runtime = std::env::var("XDG_RUNTIME_DIR").ok()?;
     let path = std::path::Path::new(&runtime).join("hypr").join(sig).join(".socket.sock");
@@ -534,7 +534,7 @@ fn hyprland_request(req: &str) -> Option<String> {
 }
 
 /// A program's stdout, or None if it is missing, fails or takes over 3 s.
-fn command_output(prog: &str, args: &[&str]) -> Option<String> {
+pub(crate) fn command_output(prog: &str, args: &[&str]) -> Option<String> {
     let mut child = Command::new(prog)
         .args(args)
         .stdin(Stdio::null())
