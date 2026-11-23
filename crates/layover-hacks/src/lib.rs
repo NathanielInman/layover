@@ -187,6 +187,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/marble-vein.wgsl"),
     },
     Hack {
+        id: "flux-grid",
+        name: "Flux Grid",
+        about: "Undulating 3D wave-lattice canopy with wireframe ribs, faceted tiles and rolling sinusoidal swells across the dark (after Gflux by Josiah Pease and CWaves by Jamie Zawinski).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/flux-grid.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
