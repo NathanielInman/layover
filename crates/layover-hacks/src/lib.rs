@@ -117,6 +117,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/julia-filigree.wgsl"),
     },
     Hack {
+        id: "prism-barrel",
+        name: "Prism Barrel",
+        about: "Stained-glass shards and sweeping arcs tumbling through shifting mirror chambers (after Kaleidescope by Ron Tapia).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/prism-barrel.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
