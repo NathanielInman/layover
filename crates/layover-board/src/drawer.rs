@@ -21,6 +21,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 pub enum Msg {
+    /// Another app's drawer opened: close this one.
+    OtherDrawerOpened,
     Event(BoardEvent),
     /// A watched stylesheet, the config or the wear cache changed.
     Restyle,
@@ -267,6 +269,7 @@ impl Drawer {
 
     pub fn handle(self: &Rc<Self>, msg: Msg) {
         match msg {
+            Msg::OtherDrawerOpened => self.hide(),
             Msg::Event(BoardEvent::Snapshot { snapshot }) => {
                 *self.snap.borrow_mut() = Some(*snapshot);
                 if self.visible.get() {
@@ -372,6 +375,7 @@ impl Drawer {
         self.window.set_visible(true);
         self.window.present();
         if !was_visible {
+            bar_anchor::drawers::opened("layover");
             self.spring.play_in(0);
         }
     }
