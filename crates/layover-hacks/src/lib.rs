@@ -137,6 +137,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/helix-tunnel.wgsl"),
     },
     Hack {
+        id: "pulsar-ridge",
+        name: "Pulsar Ridge",
+        about: "Hidden-line pulsar ridgelines scrolling across the dark (after Unknown Pleasures by Jamie Zawinski).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/pulsar-ridge.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
