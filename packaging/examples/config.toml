@@ -145,6 +145,10 @@ gpu = "auto"
 # every hack.
 hacks = []
 
+# Smooth stair-steps with a cheap FXAA pass in the care shader. Useful when
+# `power.render_scale` is below 1; set false to turn it off.
+antialias = true
+
 [bar]
 # The layer-shell namespace of your bar's surface, so the drawer can open
 # from the clicked moon.

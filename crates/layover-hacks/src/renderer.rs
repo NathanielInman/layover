@@ -112,7 +112,8 @@ struct CareU {
     hue: f32,
     hue_on: f32,
     fade: f32,
-    _pad: [f32; 3],
+    aa_on: f32,
+    _pad: [f32; 2],
 }
 
 const PRELUDE: &str = include_str!("hacks/prelude.wgsl");
@@ -186,6 +187,8 @@ pub struct Renderer {
     slots: HashMap<usize, Slot>,
     hue: f32,
     hue_on: bool,
+    antialias: bool,
+    aa_on: bool,
 }
 
 fn uniform_entry(binding: u32, vis: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
@@ -388,6 +391,8 @@ impl Renderer {
             slots: HashMap::new(),
             hue: 0.0,
             hue_on: true,
+            antialias: true,
+            aa_on: true,
         }
     }
 
@@ -505,6 +510,7 @@ impl Renderer {
         self.queue.write_buffer(&self.limit, 0, bytemuck::bytes_of(&limit));
         self.hue = self.care.hue(frame.phase);
         self.hue_on = frame.hack.hue_turn;
+        self.aa_on = self.antialias && !frame.hack.text_heavy;
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -551,6 +557,11 @@ impl Renderer {
     /// Dim every frame by `dim` (cheap mode), 1 for full drive.
     pub fn set_dim(&mut self, dim: f32) {
         self.dim = dim.clamp(0.1, 1.0);
+    }
+
+    /// Smooth stair-steps in the care pass (skipped on text-heavy hacks).
+    pub fn set_antialias(&mut self, on: bool) {
+        self.antialias = on;
     }
 
     pub fn reset_limiter(&self) {
@@ -637,7 +648,8 @@ impl Renderer {
             hue: self.hue,
             hue_on: if self.hue_on { 1.0 } else { 0.0 },
             fade: fade.clamp(0.0, 1.0),
-            _pad: [0.0; 3],
+            aa_on: if self.aa_on { 1.0 } else { 0.0 },
+            _pad: [0.0; 2],
         };
         let s = &self.slots[&slot];
         self.queue.write_buffer(&s.uniform, 0, bytemuck::bytes_of(&u));

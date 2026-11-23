@@ -257,11 +257,19 @@ pub enum Gpu {
     HighPerformance,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, Default)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Saver {
     /// Hacks in the rotation, by id. Empty means every hack, in order.
     pub hacks: Vec<String>,
+    /// Smooth stair-steps in the care pass with a lightweight FXAA pass.
+    pub antialias: bool,
+}
+
+impl Default for Saver {
+    fn default() -> Self {
+        Saver { hacks: Vec::new(), antialias: true }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -740,5 +748,12 @@ mod tests {
             Config::default().summary(),
             "Saver after 15m · lock with the dark · screens off after 1h"
         );
+    }
+
+    #[test]
+    fn disabling_antialias_is_not_loosening() {
+        let cfg = Config::parse("[saver]\nantialias = false").unwrap();
+        assert!(!cfg.saver.antialias);
+        assert!(cfg.loosened().is_empty());
     }
 }

@@ -370,6 +370,7 @@ impl Saver {
             let mut renderer = Renderer::new(&gpu.device, &gpu.queue, self.care.clone());
             renderer.resize(self.canvas, self.offscreen_size());
             renderer.set_dim(if self.cheap { feeds::CHEAP_DIM } else { 1.0 });
+            renderer.set_antialias(self.cfg.saver.antialias);
             renderer.reset_limiter();
             for hack in &self.hacks {
                 renderer.prepare(hack)?;

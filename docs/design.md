@@ -151,9 +151,10 @@ Each frame:
    `power.render_scale`, with the orbit offset added to every position.
 2. The limiter pass measures the average level on a sparse grid and eases a
    gain toward `care.max_average`.
-3. A care pass per output samples that output's part of the texture and
-   applies, in order: hue turn (if the hack allows it), drive scale,
-   limiter gain, white cap and fade.
+3. A care pass per output samples that output's part of the texture (using
+   lightweight FXAA when `saver.antialias` is on and the hack is not
+   text-heavy) and applies, in order: hue turn (if the hack allows it), drive
+   scale, limiter gain, white cap and fade.
 
 Hacks hand off with a fade through black. Text-heavy hacks declare it and use
 `care.text_rotate`.
@@ -199,7 +200,8 @@ your config and writes a heat map PNG.
 ## Config
 
 `[bar]`, `[drawer]` and `[theme]` set where the drawer opens from, its size
-and its look; the rest is the idle line, holds, care, power and the saver.
+and its look; the rest is the idle line, holds, care, power and the saver
+(`hacks` and `antialias`, which defaults to `true`).
 
 `~/.config/layover/layover.toml` (`$LAYOVER_CONFIG_DIR` overrides the
 directory). `packaging/examples/config.toml` is the shipped file with every
