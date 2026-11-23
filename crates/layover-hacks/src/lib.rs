@@ -207,6 +207,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/lava-drift.wgsl"),
     },
     Hack {
+        id: "klein-fold",
+        name: "Klein Fold",
+        about: "Sculptural 3D manifolds drifting and morphing across the dark between superquadrics, figure-8 Klein bottles and 4D hypertori (after Superquadrics by Ed Mackey, Klein and Hypertorus by Carsten Steger).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: true,
+        source: include_str!("hacks/klein-fold.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",

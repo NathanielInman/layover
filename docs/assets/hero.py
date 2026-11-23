@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the nineteen hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the twenty hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -86,24 +86,25 @@ WELL, TILE, TILE_LINE = "#15171a", "#25282c", "#2f3237"
 SUMMARY = "Saver after 15m · lock with the dark · screens off after 1h"
 # The wear test's numbers, as `layover wear` writes them to wear.json.
 HACK_ROWS = [
-    ("Night Mail", "A mail train crosses dark hills while the moon climbs across the sky.", "2.8%", "8s", "5.7%"),
+    ("Night Mail", "A mail train crosses dark hills while the moon climbs across the sky.", "2.7%", "7s", "4.7%"),
     ("Frost Aurora", "Frost, green and purple curtains over black mountains.", "6.6%", "13s", "14.4%"),
     ("Signal Lamps", "Out-of-focus yard lamps drifting in the dark, a few of them blinking.", "1.5%", "9s", "1.9%"),
-    ("Starfield", "The classic flight through the stars, rebuilt for 32:9.", "0.1%", "2s", "0.3%"),
-    ("Menger Vault", "An endless vaulted Menger sponge curving through the dark (after Menger by Jamie Zawinski).", "7.7%", "8s", "11.9%"),
-    ("Quasi Lattice", "Shifting aperiodic crystal tilings from interfering plane waves (after Quasicrystal by Jamie Zawinski).", "3.6%", "9s", "4.1%"),
-    ("Ripple Tank", "Rings from drifting sources cross into shifting interference bands (after Interference by Hannu Mallat).", "1.0%", "0s", "1.0%"),
-    ("Moire Loom", "Overlapping optical rulings weave shifting watered-silk interference bands (after Moire and Moire2 by Jamie Zawinski).", "1.9%", "1s", "4.6%"),
-    ("Julia Filigree", "Luminous Julia-set filaments morphing across the dark (after Julia by Sean McCullough).", "2.2%", "5s", "2.5%"),
-    ("Prism Barrel", "Stained-glass shards and sweeping arcs tumbling through shifting mirror chambers (after Kaleidescope by Ron Tapia).", "3.2%", "8s", "3.5%"),
+    ("Starfield", "The classic flight through the stars, rebuilt for 32:9.", "0.1%", "2s", "0.2%"),
+    ("Menger Vault", "An endless vaulted Menger sponge curving through the dark (after Menger by Jamie Zawinski).", "7.7%", "7s", "12.0%"),
+    ("Quasi Lattice", "Shifting aperiodic crystal tilings from interfering plane waves (after Quasicrystal by Jamie Zawinski).", "3.5%", "9s", "4.0%"),
+    ("Ripple Tank", "Rings from drifting sources cross into shifting interference bands (after Interference by Hannu Mallat).", "0.9%", "0s", "1.0%"),
+    ("Moire Loom", "Overlapping optical rulings weave shifting watered-silk interference bands (after Moire and Moire2 by Jamie Zawinski).", "1.9%", "1s", "4.5%"),
+    ("Julia Filigree", "Luminous Julia-set filaments morphing across the dark (after Julia by Sean McCullough).", "2.0%", "5s", "2.3%"),
+    ("Prism Barrel", "Stained-glass shards and sweeping arcs tumbling through shifting mirror chambers (after Kaleidescope by Ron Tapia).", "3.1%", "10s", "3.4%"),
     ("Helix Tunnel", "Curving helical ribs, vortex bands and rushing starlight (after Atunnel by Roman Podobedov, Timetunnel by Sean Brennan and Wormhole by Jon Rafkind).", "4.7%", "3s", "5.5%"),
     ("Pulsar Ridge", "Hidden-line pulsar ridgelines scrolling across the dark (after Unknown Pleasures by Jamie Zawinski).", "2.3%", "3s", "2.4%"),
-    ("Truchet Weave", "Multi-scale interlaced Truchet arcs and chevron ribbons weaving across the dark (after Truchet by Adrian Likins).", "3.5%", "3s", "3.8%"),
-    ("Voronoi Glass", "Drifting Voronoi cells with beveled crystal borders, faceted glass interiors and glowing nuclei (after Voronoi by Jamie Zawinski).", "4.3%", "4s", "4.5%"),
-    ("Apollonian Lace", "Nested tangent Apollonian circles and Mobius-drifting Descartes rings across the dark (after Apollonian by Allan R. Wilks and David Bagley).", "3.6%", "5s", "4.0%"),
-    ("Marble Vein", "Domain-warped marble veins and combed ebru ink ribbons folding across the dark (after Marbling by Jamie Zawinski and Dave Odell).", "4.2%", "4s", "4.5%"),
-    ("Flux Grid", "Undulating 3D wave-lattice canopy with wireframe ribs, faceted tiles and rolling sinusoidal swells across the dark (after Gflux by Josiah Pease and CWaves by Jamie Zawinski).", "7.6%", "5s", "9.2%"),
-    ("Lava Drift", "Buoyant 3D molten wax columns rising, merging into stretched necks and pinching apart across the dark (after Lavalite by Jamie Zawinski and Metaballs by W.P. van Paassen).", "7.2%", "7s", "10.4%"),
+    ("Truchet Weave", "Multi-scale interlaced Truchet arcs and chevron ribbons weaving across the dark (after Truchet by Adrian Likins).", "3.4%", "2s", "3.8%"),
+    ("Voronoi Glass", "Drifting Voronoi cells with beveled crystal borders, faceted glass interiors and glowing nuclei (after Voronoi by Jamie Zawinski).", "4.2%", "3s", "4.4%"),
+    ("Apollonian Lace", "Nested tangent Apollonian circles and Mobius-drifting Descartes rings across the dark (after Apollonian by Allan R. Wilks and David Bagley).", "3.6%", "4s", "3.8%"),
+    ("Marble Vein", "Domain-warped marble veins and combed ebru ink ribbons folding across the dark (after Marbling by Jamie Zawinski and Dave Odell).", "4.1%", "3s", "4.3%"),
+    ("Flux Grid", "Undulating 3D wave-lattice canopy with wireframe ribs, faceted tiles and rolling sinusoidal swells across the dark (after Gflux by Josiah Pease and CWaves by Jamie Zawinski).", "7.6%", "4s", "9.2%"),
+    ("Lava Drift", "Buoyant 3D molten wax columns rising, merging into stretched necks and pinching apart across the dark (after Lavalite by Jamie Zawinski and Metaballs by W.P. van Paassen).", "7.1%", "8s", "10.3%"),
+    ("Klein Fold", "Sculptural 3D manifolds drifting and morphing across the dark between superquadrics, figure-8 Klein bottles and 4D hypertori (after Superquadrics by Ed Mackey, Klein and Hypertorus by Carsten Steger).", "4.2%", "5s", "9.9%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -436,39 +437,40 @@ def term(y, s, c=FG, spans=None, weight=400):
         add("</g>")
 
 
-ty = TY_ + 52
+ty = TY_ + 50
 term(ty, "$ layover wear", FROST)
 WEAR = [
-    ("night-mail", "2.8%", " 8s", " 5.7%"),
+    ("night-mail", "2.7%", " 7s", " 4.7%"),
     ("frost-aurora", "6.6%", "13s", "14.4%"),
     ("signal-lamps", "1.5%", " 9s", " 1.9%"),
-    ("starfield", "0.1%", " 2s", " 0.3%"),
-    ("menger-vault", "7.7%", " 8s", "11.9%"),
-    ("quasi-lattice", "3.6%", " 9s", " 4.1%"),
-    ("ripple-tank", "1.0%", " 0s", " 1.0%"),
-    ("moire-loom", "1.9%", " 1s", " 4.6%"),
-    ("julia-filigree", "2.2%", " 5s", " 2.5%"),
-    ("prism-barrel", "3.2%", " 8s", " 3.5%"),
+    ("starfield", "0.1%", " 2s", " 0.2%"),
+    ("menger-vault", "7.7%", " 7s", "12.0%"),
+    ("quasi-lattice", "3.5%", " 9s", " 4.0%"),
+    ("ripple-tank", "0.9%", " 0s", " 1.0%"),
+    ("moire-loom", "1.9%", " 1s", " 4.5%"),
+    ("julia-filigree", "2.0%", " 5s", " 2.3%"),
+    ("prism-barrel", "3.1%", "10s", " 3.4%"),
     ("helix-tunnel", "4.7%", " 3s", " 5.5%"),
     ("pulsar-ridge", "2.3%", " 3s", " 2.4%"),
-    ("truchet-weave", "3.5%", " 3s", " 3.8%"),
-    ("voronoi-glass", "4.3%", " 4s", " 4.5%"),
-    ("apollonian-lace", "3.6%", " 5s", " 4.0%"),
-    ("marble-vein", "4.2%", " 4s", " 4.5%"),
-    ("flux-grid", "7.6%", " 5s", " 9.2%"),
-    ("lava-drift", "7.2%", " 7s", "10.4%"),
+    ("truchet-weave", "3.4%", " 2s", " 3.8%"),
+    ("voronoi-glass", "4.2%", " 3s", " 4.4%"),
+    ("apollonian-lace", "3.6%", " 4s", " 3.8%"),
+    ("marble-vein", "4.1%", " 3s", " 4.3%"),
+    ("flux-grid", "7.6%", " 4s", " 9.2%"),
+    ("lava-drift", "7.1%", " 8s", "10.3%"),
+    ("klein-fold", "4.2%", " 5s", " 9.9%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
-    y = ty + 21 + i * 20
+    y = ty + 20 + i * 19
     add(tx(TL, y, f"{hack:<16} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
     add(tx(TL + 57 * 7.5, y, "passes", 12.5, GO, 700))
-by = ty + 21 + len(WEAR) * 20 + 4
+by = ty + 20 + len(WEAR) * 19 + 4
 term(by, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
-term(by + 32, "$ layover hold 1h", FROST, [(HOLD, RESET)])
-term(by + 52, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
-term(by + 76, "$ layover release", FROST, [(RELEASE, RESET)])
-term(by + 96, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
+term(by + 30, "$ layover hold 1h", FROST, [(HOLD, RESET)])
+term(by + 50, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
+term(by + 74, "$ layover release", FROST, [(RELEASE, RESET)])
+term(by + 94, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
 
 # ---------------------------------------------------------------- the bar
 # packages/waybar in dot-files: a floating bar 34 px high, 6 px off the
