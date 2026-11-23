@@ -107,6 +107,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/moire-loom.wgsl"),
     },
     Hack {
+        id: "julia-filigree",
+        name: "Julia Filigree",
+        about: "Luminous Julia-set filaments morphing across the dark (after Julia by Sean McCullough).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/julia-filigree.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
