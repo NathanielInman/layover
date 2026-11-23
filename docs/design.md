@@ -231,7 +231,7 @@ defaults.
 
 | Crate | Role |
 | --- | --- |
-| `bar-anchor` | Anchoring (Hyprland, sway, niri) and panel placement. A copy of Tannoy's; its `Anchor` JSON stays identical to Roundhouse's, Switchyard's and Tannoy's. |
+| [`bar-anchor`](https://github.com/NathanielInman/bar-anchor) | Anchoring and panel placement, shared by the waybar apps and pinned by tag in the root `Cargo.toml`. |
 | `layover-core` | Config, durations, holds, the line's lamp readings, the state machine and its history, the lamp, the drawer's snapshot, the socket protocol, the waybar reader and the wear cache. No Wayland, no GPU, no UI. |
 | `layover-hacks` | The renderer, the hacks, the Departure Board's font and cells, the rotation schedule and the wear test. |
 | `layover` | The daemon, the saver, the CLI and the waybar module. |

@@ -19,9 +19,10 @@ the care pass, the wear test or a default.
   runs each tool's `bar` command), the saver
   (`saver.rs`: overlay surfaces through smithay-client-toolkit), the CLI and
   the waybar module.
-- `bar-anchor`: anchoring (Hyprland, sway, niri) and panel placement, no
-  GTK. A copy of Tannoy's; its `Anchor` JSON must stay identical to the
-  siblings'.
+- `bar-anchor` is no longer in this repo: it's the shared
+  [bar-anchor](https://github.com/NathanielInman/bar-anchor) crate, pinned by tag in the root `Cargo.toml`.
+  Change it there and move the tag; its `Anchor` JSON must stay
+  identical across the apps.
 - `layover-board`: the GTK4 layer-shell drawer. `anim.rs` and `stage.rs`
   came from Tannoy's board, `theme.rs` reads the bar's look. Check its
   layout headless with `GDK_BACKEND=broadway layover-board --shot out.png
