@@ -197,6 +197,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/flux-grid.wgsl"),
     },
     Hack {
+        id: "lava-drift",
+        name: "Lava Drift",
+        about: "Buoyant 3D molten wax columns rising, merging into stretched necks and pinching apart across the dark (after Lavalite by Jamie Zawinski and Metaballs by W.P. van Paassen).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: true,
+        source: include_str!("hacks/lava-drift.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
