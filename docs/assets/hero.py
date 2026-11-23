@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the eleven hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the twelve hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -96,6 +96,7 @@ HACK_ROWS = [
     ("Moire Loom", "Overlapping optical rulings weave shifting watered-silk interference bands (after Moire and Moire2 by Jamie Zawinski).", "1.9%", "1s", "4.6%"),
     ("Julia Filigree", "Luminous Julia-set filaments morphing across the dark (after Julia by Sean McCullough).", "2.2%", "5s", "2.5%"),
     ("Prism Barrel", "Stained-glass shards and sweeping arcs tumbling through shifting mirror chambers (after Kaleidescope by Ron Tapia).", "3.2%", "8s", "3.5%"),
+    ("Helix Tunnel", "Curving helical ribs, vortex bands and rushing starlight (after Atunnel by Roman Podobedov, Timetunnel by Sean Brennan and Wormhole by Jon Rafkind).", "4.7%", "3s", "5.5%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -414,7 +415,7 @@ def window(x, y, w, h, title=""):
 
 
 # The terminal: the wear test's real numbers from `cargo test`.
-TX_, TY_, TW_, TH_ = 34, 36, 640, 446
+TX_, TY_, TW_, TH_ = 34, 36, 640, 467
 window(TX_, TY_, TW_, TH_, "zsh · ~/Sites/layover")
 TL = TX_ + 18
 
@@ -441,6 +442,7 @@ WEAR = [
     ("moire-loom", "1.9%", " 1s", " 4.6%"),
     ("julia-filigree", "2.2%", " 5s", " 2.5%"),
     ("prism-barrel", "3.2%", " 8s", " 3.5%"),
+    ("helix-tunnel", "4.7%", " 3s", " 5.5%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):

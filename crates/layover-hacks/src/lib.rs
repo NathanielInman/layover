@@ -127,6 +127,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/prism-barrel.wgsl"),
     },
     Hack {
+        id: "helix-tunnel",
+        name: "Helix Tunnel",
+        about: "Curving helical ribs, vortex bands and rushing starlight (after Atunnel by Roman Podobedov, Timetunnel by Sean Brennan and Wormhole by Jon Rafkind).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/helix-tunnel.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
