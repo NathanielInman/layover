@@ -157,6 +157,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/truchet-weave.wgsl"),
     },
     Hack {
+        id: "voronoi-glass",
+        name: "Voronoi Glass",
+        about: "Drifting Voronoi cells with beveled crystal borders, faceted glass interiors and glowing nuclei (after Voronoi by Jamie Zawinski).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/voronoi-glass.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
