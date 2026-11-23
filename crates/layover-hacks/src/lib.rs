@@ -167,6 +167,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/voronoi-glass.wgsl"),
     },
     Hack {
+        id: "apollonian-lace",
+        name: "Apollonian Lace",
+        about: "Nested tangent Apollonian circles and Mobius-drifting Descartes rings across the dark (after Apollonian by Allan R. Wilks and David Bagley).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/apollonian-lace.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
