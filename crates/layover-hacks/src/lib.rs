@@ -97,6 +97,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/ripple-tank.wgsl"),
     },
     Hack {
+        id: "moire-loom",
+        name: "Moire Loom",
+        about: "Overlapping optical rulings weave shifting watered-silk interference bands (after Moire and Moire2 by Jamie Zawinski).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/moire-loom.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
