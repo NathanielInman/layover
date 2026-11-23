@@ -147,6 +147,16 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/pulsar-ridge.wgsl"),
     },
     Hack {
+        id: "truchet-weave",
+        name: "Truchet Weave",
+        about: "Multi-scale interlaced Truchet arcs and chevron ribbons weaving across the dark (after Truchet by Adrian Likins).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        source: include_str!("hacks/truchet-weave.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",

@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the thirteen hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the fourteen hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -98,6 +98,7 @@ HACK_ROWS = [
     ("Prism Barrel", "Stained-glass shards and sweeping arcs tumbling through shifting mirror chambers (after Kaleidescope by Ron Tapia).", "3.2%", "8s", "3.5%"),
     ("Helix Tunnel", "Curving helical ribs, vortex bands and rushing starlight (after Atunnel by Roman Podobedov, Timetunnel by Sean Brennan and Wormhole by Jon Rafkind).", "4.7%", "3s", "5.5%"),
     ("Pulsar Ridge", "Hidden-line pulsar ridgelines scrolling across the dark (after Unknown Pleasures by Jamie Zawinski).", "2.3%", "3s", "2.4%"),
+    ("Truchet Weave", "Multi-scale interlaced Truchet arcs and chevron ribbons weaving across the dark (after Truchet by Adrian Likins).", "3.5%", "3s", "3.8%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -416,7 +417,7 @@ def window(x, y, w, h, title=""):
 
 
 # The terminal: the wear test's real numbers from `cargo test`.
-TX_, TY_, TW_, TH_ = 34, 36, 640, 488
+TX_, TY_, TW_, TH_ = 34, 36, 640, 509
 window(TX_, TY_, TW_, TH_, "zsh · ~/Sites/layover")
 TL = TX_ + 18
 
@@ -445,6 +446,7 @@ WEAR = [
     ("prism-barrel", "3.2%", " 8s", " 3.5%"),
     ("helix-tunnel", "4.7%", " 3s", " 5.5%"),
     ("pulsar-ridge", "2.3%", " 3s", " 2.4%"),
+    ("truchet-weave", "3.5%", " 3s", " 3.8%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
