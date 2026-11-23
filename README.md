@@ -105,7 +105,7 @@ and turns the holds and cheap mode off.
 
 ```sh
 cargo build --release --locked
-install -Dm755 target/release/layover target/release/layover-board ~/.local/bin/
+install -Dm755 target/release/layover target/release/layover-board -t ~/.local/bin/
 ```
 
 It needs a Vulkan driver, `pactl` (for the audio and microphone holds),
