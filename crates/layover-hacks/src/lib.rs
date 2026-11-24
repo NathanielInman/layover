@@ -434,7 +434,7 @@ pub const HACKS: &[Hack] = &[
             step_hz: 30.0,
             max_steps: 1,
             max_height: Some(540),
-            wrap: true,
+            wrap: false,
         }),
         particles: Some(Particles { count: 16384 }),
         lines: None,
