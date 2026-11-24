@@ -323,6 +323,23 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/spore-cloud.wgsl"),
     },
     Hack {
+        id: "crystal-reef",
+        name: "Crystal Reef",
+        about: "Branching coral dendrites and faceted frost crystals accreting and dissolving across the dark (after Coral by Frederick Roeber and Crystal by Jouk Jansen).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(Feedback {
+            fade_secs: 5.8,
+            step_hz: 14.0,
+            max_steps: 14,
+            max_height: Some(160),
+            wrap: true,
+        }),
+        source: include_str!("hacks/crystal-reef.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
