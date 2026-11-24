@@ -289,6 +289,23 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/fault-strata.wgsl"),
     },
     Hack {
+        id: "ember-plume",
+        name: "Ember Plume",
+        about: "Buoyant curling flames, glowing ember beds and drifting cinders rising across the dark (after XFlame by Carsten Haitzler).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(Feedback {
+            fade_secs: 2.8,
+            step_hz: 18.0,
+            max_steps: 10,
+            max_height: Some(240),
+            wrap: true,
+        }),
+        source: include_str!("hacks/ember-plume.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
