@@ -306,6 +306,23 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/ember-plume.wgsl"),
     },
     Hack {
+        id: "spore-cloud",
+        name: "Spore Cloud",
+        about: "Competing cellular-automaton colonies and age-limited Life clouds blooming, colliding and fading across the dark (after Cloudlife by Don Marti and Petri by Dan Bornstein).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(Feedback {
+            fade_secs: 2.6,
+            step_hz: 10.0,
+            max_steps: 10,
+            max_height: Some(96),
+            wrap: true,
+        }),
+        source: include_str!("hacks/spore-cloud.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
