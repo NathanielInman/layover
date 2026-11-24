@@ -15,13 +15,15 @@ Every Layover hack is one WGSL fragment shader (`crates/layover-hacks/src/hacks/
 on top of `prelude.wgsl`. It gets time, canvas size and the board's storage
 buffer, draws one pixel at a time, and keeps no memory between frames unless it
 opts into Tier S (`feedback: Some(...)`), which steps ping-pong `Rgba16Float`
-state textures with a per-hack fade before drawing, or Tier P
+state textures with a per-hack fade before drawing, Tier P
 (`particles: Some(...)`), which runs persistent compute particles and atomic
-splats into the feedback canvas for attractors, flames, fireworks and swarms.
+splats into the feedback canvas for attractors, flames, fireworks and swarms,
+or Tier L (`lines: Some(...)`), which renders instanced SDF line and shape
+quads directly into the offscreen canvas before the care pass and limiter.
 The care pass and the limiter run after it. That covers anything a pixel can
 work out from time and position alone (fields, waves, fractals, tunnels,
-raymarched 3D), continuous state fields and compute particle systems. The
-Departure Board shows a glyph atlas works too.
+raymarched 3D), continuous state fields, compute particle systems and curves
+or geometric line art. The Departure Board shows a glyph atlas works too.
 
 Most of xscreensaver is not like that. Its hacks draw onto a canvas that
 keeps what was drawn, move thousands of particles, or render meshes. Each tier
@@ -33,7 +35,7 @@ below names what the renderer would gain to cover it.
 | R | raymarching helpers in the prelude (SDFs, normals, soft light) | works today |
 | S | state: ping-pong feedback textures that persist between frames | works today |
 | P | particles: storage buffers and a compute pass | works today |
-| L | lines and shapes: instanced quads with SDF edges | engine task |
+| L | lines and shapes: instanced quads with SDF edges | works today |
 | M | meshes: vertex buffers and a depth buffer | engine task |
 | T | text: the glyph atlas the Departure Board already has | works today |
 | I | an image source: a screen grab or a picture folder | needs a decision |

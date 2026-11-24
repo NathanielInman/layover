@@ -30,6 +30,28 @@ pub struct Particles {
     pub count: u32,
 }
 
+/// Blend mode for Tier L instanced lines and shapes drawn onto the offscreen canvas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineBlend {
+    /// Premultiplied alpha (`src + dst * (1 - src.a)`): later instances paint over earlier
+    /// ones, while outer halos add optically without darkening strokes behind them.
+    Alpha,
+    /// Additive (`src + dst`): overlapping strokes accumulate glow like a phosphor vector CRT.
+    Add,
+    /// Per-channel maximum (`max(src, dst)`): seamless round-capped polyline joins without bright knots.
+    Max,
+}
+
+/// Configuration for a Tier L instanced line/shape hack (`shape(idx, t)` rendered as
+/// instanced SDF quads into the offscreen target before the limiter and care pass).
+#[derive(Clone, Copy, Debug)]
+pub struct Lines {
+    /// Number of primitive instances evaluated by `shape(idx, t)` each frame.
+    pub count: u32,
+    /// How primitives blend onto the offscreen target (and over `hack(p, t)`).
+    pub blend: LineBlend,
+}
+
 /// A hack: a WGSL `hack(p, t)` function and what the renderer needs to know
 /// about it.
 #[derive(Debug)]
@@ -51,6 +73,8 @@ pub struct Hack {
     pub feedback: Option<Feedback>,
     /// Uses Tier P persistent compute particles and atomic splats (`step_particle`, `resolve_state`).
     pub particles: Option<Particles>,
+    /// Uses Tier L instanced SDF line/shape quads (`shape(idx, t)`).
+    pub lines: Option<Lines>,
     pub source: &'static str,
 }
 
@@ -65,6 +89,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/night-mail.wgsl"),
     },
     Hack {
@@ -77,6 +102,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/frost-aurora.wgsl"),
     },
     Hack {
@@ -89,6 +115,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/signal-lamps.wgsl"),
     },
     Hack {
@@ -101,6 +128,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/starfield.wgsl"),
     },
     Hack {
@@ -113,6 +141,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: true,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/menger-vault.wgsl"),
     },
     Hack {
@@ -125,6 +154,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/quasi-lattice.wgsl"),
     },
     Hack {
@@ -137,6 +167,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/ripple-tank.wgsl"),
     },
     Hack {
@@ -149,6 +180,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/moire-loom.wgsl"),
     },
     Hack {
@@ -161,6 +193,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/julia-filigree.wgsl"),
     },
     Hack {
@@ -173,6 +206,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/prism-barrel.wgsl"),
     },
     Hack {
@@ -185,6 +219,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/helix-tunnel.wgsl"),
     },
     Hack {
@@ -197,6 +232,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/pulsar-ridge.wgsl"),
     },
     Hack {
@@ -209,6 +245,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/truchet-weave.wgsl"),
     },
     Hack {
@@ -221,6 +258,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/voronoi-glass.wgsl"),
     },
     Hack {
@@ -233,6 +271,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/apollonian-lace.wgsl"),
     },
     Hack {
@@ -245,6 +284,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/marble-vein.wgsl"),
     },
     Hack {
@@ -257,6 +297,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/flux-grid.wgsl"),
     },
     Hack {
@@ -269,6 +310,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: true,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/lava-drift.wgsl"),
     },
     Hack {
@@ -281,6 +323,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: true,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/klein-fold.wgsl"),
     },
     Hack {
@@ -299,6 +342,7 @@ pub const HACKS: &[Hack] = &[
             wrap: true,
         }),
         particles: None,
+        lines: None,
         source: include_str!("hacks/reagent-bloom.wgsl"),
     },
     Hack {
@@ -317,6 +361,7 @@ pub const HACKS: &[Hack] = &[
             wrap: true,
         }),
         particles: None,
+        lines: None,
         source: include_str!("hacks/fault-strata.wgsl"),
     },
     Hack {
@@ -335,6 +380,7 @@ pub const HACKS: &[Hack] = &[
             wrap: true,
         }),
         particles: None,
+        lines: None,
         source: include_str!("hacks/ember-plume.wgsl"),
     },
     Hack {
@@ -353,6 +399,7 @@ pub const HACKS: &[Hack] = &[
             wrap: true,
         }),
         particles: None,
+        lines: None,
         source: include_str!("hacks/spore-cloud.wgsl"),
     },
     Hack {
@@ -371,6 +418,7 @@ pub const HACKS: &[Hack] = &[
             wrap: true,
         }),
         particles: None,
+        lines: None,
         source: include_str!("hacks/crystal-reef.wgsl"),
     },
     Hack {
@@ -389,6 +437,7 @@ pub const HACKS: &[Hack] = &[
             wrap: true,
         }),
         particles: Some(Particles { count: 16384 }),
+        lines: None,
         source: include_str!("hacks/flame-veil.wgsl"),
     },
     Hack {
@@ -407,6 +456,7 @@ pub const HACKS: &[Hack] = &[
             wrap: false,
         }),
         particles: Some(Particles { count: 4096 }),
+        lines: None,
         source: include_str!("hacks/star-shell.wgsl"),
     },
     Hack {
@@ -419,6 +469,7 @@ pub const HACKS: &[Hack] = &[
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: include_str!("hacks/departure-board.wgsl"),
     },
 ];
@@ -520,6 +571,15 @@ mod tests {
                 assert!(h.feedback.is_some(), "{} uses particles without feedback", h.id);
                 assert!(p.count > 0, "{} has zero particles", h.id);
                 assert!(!h.board, "{} mixes board and particles", h.id);
+            }
+        }
+    }
+
+    #[test]
+    fn line_hacks_require_nonzero_count() {
+        for h in HACKS {
+            if let Some(l) = h.lines {
+                assert!(l.count > 0, "{} has zero line instances", h.id);
             }
         }
     }

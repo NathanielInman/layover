@@ -13,7 +13,7 @@ struct Globals {
     dt: f32,
     fade: f32,
     frame: f32,
-    _pad: f32,
+    line_count: f32,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;

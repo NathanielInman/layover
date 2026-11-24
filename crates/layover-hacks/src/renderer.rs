@@ -2,8 +2,8 @@
 //! care pass per output. Rule one lives in `care.wgsl` and `limiter.wgsl`;
 //! this file only feeds them.
 
-use crate::Hack;
 use crate::board::BoardData;
+use crate::{Hack, LineBlend};
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use layover_core::config::Care;
@@ -93,7 +93,7 @@ struct Globals {
     dt: f32,
     fade: f32,
     frame: f32,
-    _pad: f32,
+    line_count: f32,
 }
 
 #[repr(C)]
@@ -124,6 +124,7 @@ const PRELUDE: &str = include_str!("hacks/prelude.wgsl");
 const RAYMARCH: &str = include_str!("hacks/raymarch.wgsl");
 const FEEDBACK: &str = include_str!("hacks/feedback.wgsl");
 const PARTICLES: &str = include_str!("hacks/particles.wgsl");
+const LINES: &str = include_str!("hacks/lines.wgsl");
 
 /// The board binding, for hacks with `board: true`.
 const BOARD_BINDING: &str = r#"
@@ -189,6 +190,17 @@ fn fs_hack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let p = vec2<f32>(cp.x / g.canvas.y, 1.0 - cp.y / g.canvas.y);
     let c = hack(p, g.time);
     return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+"#;
+const LINE_MAIN: &str = r#"
+@vertex
+fn vs_line(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> LineVsOut {
+    return line_vertex(vi, shape(ii, g.time));
+}
+
+@fragment
+fn fs_line(in: LineVsOut) -> @location(0) vec4<f32> {
+    return line_fragment(in);
 }
 "#;
 
@@ -262,6 +274,7 @@ pub struct Renderer {
     /// Cheap mode dims everything by this (1 otherwise).
     dim: f32,
     hack_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
+    line_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
     globals: wgpu::Buffer,
     limit: wgpu::Buffer,
     gain: wgpu::Buffer,
@@ -345,7 +358,7 @@ impl Renderer {
         let globals = buffer(device, "globals", size_of::<Globals>() as u64, uni);
         let hack_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hack"),
-            entries: &[uniform_entry(0, frag)],
+            entries: &[uniform_entry(0, wgpu::ShaderStages::VERTEX | frag)],
         });
         let hack_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hack"),
@@ -586,6 +599,7 @@ impl Renderer {
             state_needs_clear: true,
             dim: 1.0,
             hack_pipes: HashMap::new(),
+            line_pipes: HashMap::new(),
             globals,
             limit,
             gain,
@@ -670,6 +684,75 @@ impl Renderer {
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
                     blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
+    fn line_blend_state(blend: LineBlend) -> wgpu::BlendState {
+        match blend {
+            LineBlend::Alpha => wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            LineBlend::Add => wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
+            LineBlend::Max => wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Max,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Max,
+                },
+            },
+        }
+    }
+
+    fn build_line_pipeline(
+        &self,
+        label: &str,
+        layout: &wgpu::PipelineLayout,
+        module: &wgpu::ShaderModule,
+        blend: LineBlend,
+    ) -> wgpu::RenderPipeline {
+        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some("vs_line"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module,
+                entry_point: Some("fs_line"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: OFFSCREEN_FORMAT,
+                    blend: Some(Self::line_blend_state(blend)),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -789,6 +872,11 @@ impl Renderer {
         if hack.particles.is_some() && hack.feedback.is_none() {
             return Err(anyhow!("hack {} uses particles without feedback", hack.id));
         }
+        if let Some(lines) = hack.lines
+            && lines.count == 0
+        {
+            return Err(anyhow!("hack {} has zero line instances", hack.id));
+        }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let board = if hack.board {
             format!(
@@ -802,6 +890,7 @@ impl Renderer {
         let raymarch = if hack.raymarch { RAYMARCH } else { "" };
         let feedback = if hack.feedback.is_some() { FEEDBACK } else { "" };
         let particles = if hack.particles.is_some() { PARTICLES } else { "" };
+        let lines = if hack.lines.is_some() { LINES } else { "" };
         let step_main = if hack.particles.is_some() {
             format!("{PARTICLE_MAIN}\n{RESOLVE_MAIN}")
         } else if hack.feedback.is_some() {
@@ -809,8 +898,9 @@ impl Renderer {
         } else {
             String::new()
         };
+        let line_main = if hack.lines.is_some() { LINE_MAIN } else { "" };
         let source = format!(
-            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{particles}\n{}\n{step_main}\n{HACK_MAIN}",
+            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{particles}\n{lines}\n{}\n{step_main}\n{HACK_MAIN}\n{line_main}",
             hack.source
         );
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -856,6 +946,8 @@ impl Renderer {
             &self.hack_layout
         };
         let pipe = self.build_pipeline(hack.id, hack_layout, &module, "fs_hack", OFFSCREEN_FORMAT);
+        let line_pipe =
+            hack.lines.map(|l| self.build_line_pipeline(hack.id, hack_layout, &module, l.blend));
         if let Some(err) = pollster::block_on(scope.pop()) {
             return Err(anyhow!("hack {} does not compile: {err}", hack.id));
         }
@@ -867,6 +959,9 @@ impl Renderer {
         }
         if let Some(resolve_pipe) = resolve_pipe {
             self.resolve_pipes.insert(hack.id, resolve_pipe);
+        }
+        if let Some(line_pipe) = line_pipe {
+            self.line_pipes.insert(hack.id, line_pipe);
         }
         self.hack_pipes.insert(hack.id, pipe);
         Ok(())
@@ -945,7 +1040,7 @@ impl Renderer {
                     dt: step_dt,
                     fade,
                     frame: (self.state_frame + i as u64) as f32,
-                    _pad: 0.0,
+                    line_count: 0.0,
                 };
                 let start = i as usize * self.step_stride;
                 buf[start..start + size_of::<Globals>()].copy_from_slice(bytemuck::bytes_of(&g));
@@ -1034,7 +1129,7 @@ impl Renderer {
             dt: frame.dt.max(0.0),
             fade: 1.0,
             frame: self.state_frame as f32,
-            _pad: 0.0,
+            line_count: frame.hack.lines.map_or(0.0, |l| l.count as f32),
         };
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let limit = Limit {
@@ -1079,6 +1174,12 @@ impl Renderer {
                 pass.set_bind_group(1, fb_bg, &[]);
             }
             pass.draw(0..3, 0..1);
+            if let Some(lines) = frame.hack.lines
+                && lines.count > 0
+            {
+                pass.set_pipeline(&self.line_pipes[frame.hack.id]);
+                pass.draw(0..4, 0..lines.count);
+            }
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

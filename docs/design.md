@@ -146,11 +146,14 @@ a hack with `raymarch: true` also gets `hacks/raymarch.wgsl` (sphere tracing,
 tetrahedron normals, ambient occlusion and soft shadows over its `sdf(p, t)`),
 a hack with `feedback: Some(...)` also gets `hacks/feedback.wgsl` and ping-pong
 `Rgba16Float` state textures stepped by `step_state(uv, p, t)` with per-hack
-exponential fade (`g.fade = exp(-dt / fade_secs)`), and a hack with
+exponential fade (`g.fade = exp(-dt / fade_secs)`), a hack with
 `particles: Some(...)` also gets `hacks/particles.wgsl` (persistent `Particle`
 storage buffer, atomic fixed-point splat helpers and `step_particle(idx, t)` /
 `resolve_state(uv, p, t, splat)` compute passes resolving into the ping-pong
-state textures).
+state textures), and a hack with `lines: Some(...)` also gets `hacks/lines.wgsl`
+(instanced SDF quads for segments, discs, rings/arcs, rounded boxes and
+triangles with `Alpha`, `Add` or `Max` blending, energy-conserving subpixel
+antialiasing and optional glow over `shape(idx, t)`).
 
 Each frame:
 
@@ -159,7 +162,9 @@ Each frame:
    `resolve_state` compute passes into the feedback texture), fading older
    history on the hack's clock.
 2. The hack pass draws the whole canvas into one offscreen texture at
-   `power.render_scale`, with the orbit offset added to every position.
+   `power.render_scale`, with the orbit offset added to every position; Tier L
+   hacks (`lines`) draw their instanced SDF primitives into the same offscreen
+   texture right after `hack(p, t)` with the same orbit offset.
 3. The limiter pass measures the average level on a sparse grid and eases a
    gain toward `care.max_average`.
 4. A care pass per output samples that output's part of the texture (using
@@ -207,10 +212,11 @@ measures:
 `cargo test` runs it for every hack against the shipped budget (it needs a
 GPU adapter; CI uses Mesa's lavapipe). Stateful and particle hacks run with
 their persistent ping-pong state (and particle storage buffer) from a fixed
-seed so accumulation and fades are measured, and tests verify that both an
-unfaded stateful hack and an unfaded particle hack fail the dwell budget while
-fading ones pass deterministically. `layover wear <hack>` runs it against your
-config and writes a heat map PNG.
+seed so accumulation and fades are measured, and instanced line/shape hacks
+(`lines`) run through the same orbit, limiter and care pass so tests verify
+that static lines, unfaded stateful hacks and unfaded particle hacks fail the
+dwell budget while moving or fading ones pass deterministically. `layover wear <hack>`
+runs it against your config and writes a heat map PNG.
 
 ## Config
 

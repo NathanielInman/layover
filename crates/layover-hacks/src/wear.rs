@@ -330,6 +330,7 @@ mod tests {
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6); return vec3<f32>(on * 0.9); }",
     };
 
@@ -343,6 +344,7 @@ mod tests {
         raymarch: false,
         feedback: None,
         particles: None,
+        lines: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { return vec3<f32>(0.8 + 0.2 * sin(t * 3.0 + p.x * 40.0)); }",
     };
 
@@ -362,6 +364,7 @@ mod tests {
             wrap: false,
         }),
         particles: None,
+        lines: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, _t: f32) -> vec4<f32> {
     if (g.frame < 0.5) {
@@ -392,6 +395,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
             wrap: false,
         }),
         particles: None,
+        lines: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
     let prev = state_faded(uv).rgb;
@@ -423,6 +427,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
             wrap: false,
         }),
         particles: Some(crate::Particles { count: 256 }),
+        lines: None,
         source: r#"
 fn step_particle(idx: u32, _t: f32) {
     if (g.frame < 0.5) {
@@ -457,6 +462,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
             wrap: false,
         }),
         particles: Some(crate::Particles { count: 256 }),
+        lines: None,
         source: r#"
 fn step_particle(idx: u32, t: f32) {
     let fi = f32(idx);
@@ -474,6 +480,226 @@ fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec
 }
 fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
     return state_sample(state_uv(p)).rgb;
+}
+"#,
+    };
+
+    static STILL_LINE_HACK: Hack = Hack {
+        id: "still-line",
+        name: "Still Line",
+        about: "A bright static segment that never moves.",
+        text_heavy: false,
+        hue_turn: false,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: Some(crate::Lines { count: 1, blend: crate::LineBlend::Alpha }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shape(_idx: u32, _t: f32) -> Shape {
+    return shape_segment(
+        vec2<f32>(1.3, 0.5),
+        vec2<f32>(2.2, 0.5),
+        0.18,
+        vec4<f32>(0.9, 0.9, 0.9, 1.0),
+    );
+}
+"#,
+    };
+
+    static MOVING_LINE_HACK: Hack = Hack {
+        id: "moving-line",
+        name: "Moving Line",
+        about: "Instanced lines, discs, rings, arcs, boxes and triangles sweeping across the canvas.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: Some(crate::Lines { count: 32, blend: crate::LineBlend::Max }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shape(idx: u32, t: f32) -> Shape {
+    let total = max(line_count(), 1u);
+    let fi = f32(idx);
+    let a = aspect();
+    let ph = fi * 0.61803399 * TAU + g.seed * TAU;
+    let c = vec2<f32>(
+        a * (0.5 + 0.36 * sin(t * 0.45 + ph)),
+        0.5 + 0.34 * cos(t * 0.63 + ph * 1.3),
+    );
+    let rgb_a = 0.5 + 0.45 * cos(t * 0.5 + ph + vec3<f32>(0.0, 2.094, 4.188));
+    let rgb_b = 0.5 + 0.45 * cos(t * 0.5 + ph + 1.2 + vec3<f32>(0.0, 2.094, 4.188));
+    let col_a = vec4<f32>(rgb_a, 1.0);
+    let col_b = vec4<f32>(rgb_b, 1.0);
+
+    if (idx >= total - 2u) {
+        return shape_none();
+    }
+    if (idx < 10u) {
+        let off = vec2<f32>(0.24 * cos(t * 0.7 + ph), 0.16 * sin(t * 0.9 + ph));
+        return shape_glow(
+            shape_segment_taper(c - off, c + off, 0.04, 0.08, col_a, col_b, 0.0),
+            0.04,
+            0.35,
+        );
+    }
+    if (idx < 16u) {
+        return shape_grad(shape_disc(c, 0.065, col_a, 0.04), col_b);
+    }
+    if (idx < 18u) {
+        return shape_grad(shape_ring(c, 0.16, 0.045, col_a, 0.03), col_b);
+    }
+    if (idx < 20u) {
+        return shape_arc(c, 0.17, 0.045, t * 0.9 + ph, 1.35, col_a, col_b, 0.03);
+    }
+    if (idx < 24u) {
+        let stroke = select(0.0, 0.035, (idx & 1u) != 0u);
+        return shape_grad(
+            shape_box(c, vec2<f32>(0.09, 0.06), t * 0.8 + ph, 0.02, stroke, col_a, 0.03),
+            col_b,
+        );
+    }
+    if (idx < 28u) {
+        let stroke = select(0.0, 0.035, (idx & 1u) != 0u);
+        let ang = t * 0.75 + ph;
+        let r = 0.09;
+        let p0 = c + vec2<f32>(cos(ang), sin(ang)) * r;
+        let p1 = c + vec2<f32>(cos(ang + 2.094), sin(ang + 2.094)) * r;
+        let p2 = c + vec2<f32>(cos(ang + 4.188), sin(ang + 4.188)) * r;
+        return shape_grad(shape_triangle(p0, p1, p2, stroke, col_a, 0.03), col_b);
+    }
+    let off = vec2<f32>(0.22 * sin(t * 0.8 + ph), 0.14 * cos(t * 0.6 + ph));
+    return shape_glow(
+        shape_grad(shape_segment(c - off, c + off, 0.055, col_a), col_b),
+        0.04,
+        0.4,
+    );
+}
+"#,
+    };
+
+    static OVERDRIVEN_ADD_LINE_HACK: Hack = Hack {
+        id: "overdriven-add-line",
+        name: "Overdriven Add Line",
+        about: "Overlapping additive lines held under the care limits.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: Some(crate::Lines { count: 40, blend: crate::LineBlend::Add }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shape(idx: u32, t: f32) -> Shape {
+    let fi = f32(idx);
+    let a = aspect();
+    let y = 0.25 + 0.5 * fract(0.13 * fi + t * 0.08);
+    return shape_segment(
+        vec2<f32>(0.2 * a, y),
+        vec2<f32>(0.8 * a, y),
+        0.16,
+        vec4<f32>(0.95, 0.95, 0.95, 1.0),
+    );
+}
+"#,
+    };
+
+    static HAIRLINE_LINE_HACK: Hack = Hack {
+        id: "hairline-line",
+        name: "Hairline Line",
+        about: "Subpixel hairline segments retaining visibility under energy-conserving AA.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: Some(crate::Lines { count: 8, blend: crate::LineBlend::Alpha }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shape(idx: u32, t: f32) -> Shape {
+    let fi = f32(idx);
+    let a = aspect();
+    let y = fract(0.125 * fi + t * 0.23);
+    return shape_segment(
+        vec2<f32>(0.05 * a, y),
+        vec2<f32>(0.95 * a, 1.0 - y),
+        0.004,
+        vec4<f32>(0.9, 0.85, 0.8, 1.0),
+    );
+}
+"#,
+    };
+
+    static FEEDBACK_AND_LINE_HACK: Hack = Hack {
+        id: "feedback-and-line",
+        name: "Feedback And Line",
+        about: "Combines Tier S feedback state with Tier L instanced lines.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(crate::Feedback {
+            fade_secs: 2.5,
+            step_hz: 1.0,
+            max_steps: 1,
+            max_height: None,
+            wrap: false,
+        }),
+        particles: None,
+        lines: Some(crate::Lines { count: 8, blend: crate::LineBlend::Max }),
+        source: r#"
+fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
+    let prev = state_faded(uv).rgb;
+    let a = aspect();
+    let c = vec2<f32>(a * (0.5 + 0.35 * sin(t * 0.7)), 0.5 + 0.3 * cos(t * 1.1));
+    let m = disc(length(p - c), 0.14, 0.04);
+    let col = 0.35 + 0.25 * cos(t * 0.8 + vec3<f32>(0.0, 2.094, 4.188));
+    return vec4<f32>(max(prev, col * m), 1.0);
+}
+fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return state_sample(state_uv(p)).rgb;
+}
+fn shape(idx: u32, t: f32) -> Shape {
+    let fi = f32(idx);
+    let a = aspect();
+    let ph = fi * 0.7854 + t * 0.8;
+    let c = vec2<f32>(a * (0.5 + 0.35 * cos(ph)), 0.5 + 0.3 * sin(ph * 1.3));
+    let col = vec4<f32>(0.5 + 0.4 * sin(t + fi + vec3<f32>(0.0, 2.094, 4.188)), 1.0);
+    return shape_ring(c, 0.12, 0.04, col, 0.02);
+}
+"#,
+    };
+
+    static ZERO_LINES_HACK: Hack = Hack {
+        id: "zero-lines",
+        name: "Zero Lines",
+        about: "Invalid zero-instance Tier L hack.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: Some(crate::Lines { count: 0, blend: crate::LineBlend::Alpha }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn shape(_idx: u32, _t: f32) -> Shape {
+    return shape_none();
 }
 "#,
     };
@@ -546,6 +772,62 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
         assert_eq!(a.max_dwell_secs, b.max_dwell_secs);
         assert_eq!(a.hot_spot, b.hot_spot);
         assert_eq!(a.peak, b.peak);
+    }
+
+    #[test]
+    fn a_still_line_hack_fails_the_dwell_budget() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &STILL_LINE_HACK, &care, 60, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.max_dwell_secs > budget.max_dwell_secs, "{}", report.summary());
+        assert!(!report.failures(&budget).is_empty());
+    }
+
+    #[test]
+    fn a_moving_line_hack_passes_wear() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &MOVING_LINE_HACK, &care, 120, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.failures(&budget).is_empty(), "{}", report.summary());
+        assert!(report.average > 0.002, "{}", report.summary());
+    }
+
+    #[test]
+    fn line_wear_is_deterministic_from_seed() {
+        let Some(gpu) = gpu() else { return };
+        let (care, _) = shipped();
+        let a = run(&gpu, &MOVING_LINE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        let b = run(&gpu, &MOVING_LINE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert_eq!(a.average, b.average);
+        assert_eq!(a.max_dwell_secs, b.max_dwell_secs);
+        assert_eq!(a.hot_spot, b.hot_spot);
+        assert_eq!(a.peak, b.peak);
+    }
+
+    #[test]
+    fn line_blend_modes_respect_care_limits_and_hairline_energy() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+
+        let overdriven =
+            run(&gpu, &OVERDRIVEN_ADD_LINE_HACK, &care, 30, [64, 18], G9_CANVAS).unwrap();
+        assert!(overdriven.peak <= budget.max_drive + 1.0 / 255.0, "{}", overdriven.summary());
+        assert!(overdriven.average <= budget.max_average + 0.01, "{}", overdriven.summary());
+
+        let hairline = run(&gpu, &HAIRLINE_LINE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert!(hairline.average > 0.0005, "{}", hairline.summary());
+
+        let mut renderer = Renderer::new(&gpu.device, &gpu.queue, care);
+        assert!(renderer.prepare(&ZERO_LINES_HACK).is_err());
+    }
+
+    #[test]
+    fn line_and_feedback_compose_together() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &FEEDBACK_AND_LINE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.failures(&budget).is_empty(), "{}", report.summary());
+        assert!(report.average > 0.002, "{}", report.summary());
     }
 
     /// The limiter and the caps hold a full-white hack to the budget.
