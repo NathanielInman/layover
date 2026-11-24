@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the twenty hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the twenty-one hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -105,6 +105,7 @@ HACK_ROWS = [
     ("Flux Grid", "Undulating 3D wave-lattice canopy with wireframe ribs, faceted tiles and rolling sinusoidal swells across the dark (after Gflux by Josiah Pease and CWaves by Jamie Zawinski).", "7.6%", "4s", "9.2%"),
     ("Lava Drift", "Buoyant 3D molten wax columns rising, merging into stretched necks and pinching apart across the dark (after Lavalite by Jamie Zawinski and Metaballs by W.P. van Paassen).", "7.1%", "8s", "10.3%"),
     ("Klein Fold", "Sculptural 3D manifolds drifting and morphing across the dark between superquadrics, figure-8 Klein bottles and 4D hypertori (after Superquadrics by Ed Mackey, Klein and Hypertorus by Carsten Steger).", "4.2%", "5s", "9.9%"),
+    ("Reagent Bloom", "Reaction-diffusion waves, curling spirals and coral blooms drifting across the dark (after RD-Bomb by Scott Draves).", "7.1%", "11s", "8.2%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -437,7 +438,7 @@ def term(y, s, c=FG, spans=None, weight=400):
         add("</g>")
 
 
-ty = TY_ + 50
+ty = TY_ + 48
 term(ty, "$ layover wear", FROST)
 WEAR = [
     ("night-mail", "2.7%", " 7s", " 4.7%"),
@@ -459,18 +460,19 @@ WEAR = [
     ("flux-grid", "7.6%", " 4s", " 9.2%"),
     ("lava-drift", "7.1%", " 8s", "10.3%"),
     ("klein-fold", "4.2%", " 5s", " 9.9%"),
+    ("reagent-bloom", "7.1%", "11s", " 8.2%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
-    y = ty + 20 + i * 19
+    y = ty + 19 + i * 18
     add(tx(TL, y, f"{hack:<16} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
     add(tx(TL + 57 * 7.5, y, "passes", 12.5, GO, 700))
-by = ty + 20 + len(WEAR) * 19 + 4
+by = ty + 19 + len(WEAR) * 18 + 4
 term(by, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
-term(by + 30, "$ layover hold 1h", FROST, [(HOLD, RESET)])
-term(by + 50, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
-term(by + 74, "$ layover release", FROST, [(RELEASE, RESET)])
-term(by + 94, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
+term(by + 28, "$ layover hold 1h", FROST, [(HOLD, RESET)])
+term(by + 48, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
+term(by + 70, "$ layover release", FROST, [(RELEASE, RESET)])
+term(by + 90, "Saver after 15m · lock with the dark · screens off after 1h", DIM, [(RELEASE + 0.25, RESET)])
 
 # ---------------------------------------------------------------- the bar
 # packages/waybar in dot-files: a floating bar 34 px high, 6 px off the

@@ -255,6 +255,23 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/klein-fold.wgsl"),
     },
     Hack {
+        id: "reagent-bloom",
+        name: "Reagent Bloom",
+        about: "Reaction-diffusion waves, curling spirals and coral blooms drifting across the dark (after RD-Bomb by Scott Draves).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(Feedback {
+            fade_secs: 3.5,
+            step_hz: 90.0,
+            max_steps: 12,
+            max_height: Some(240),
+            wrap: true,
+        }),
+        source: include_str!("hacks/reagent-bloom.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
