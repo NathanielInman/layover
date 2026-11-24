@@ -123,6 +123,7 @@ struct CareU {
 const PRELUDE: &str = include_str!("hacks/prelude.wgsl");
 const RAYMARCH: &str = include_str!("hacks/raymarch.wgsl");
 const FEEDBACK: &str = include_str!("hacks/feedback.wgsl");
+const PARTICLES: &str = include_str!("hacks/particles.wgsl");
 
 /// The board binding, for hacks with `board: true`.
 const BOARD_BINDING: &str = r#"
@@ -150,6 +151,37 @@ fn fs_step(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return clamp(s, vec4<f32>(-100.0), vec4<f32>(100.0));
 }
 "#;
+const PARTICLE_MAIN: &str = r#"
+@compute @workgroup_size(64)
+fn cs_particles(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= arrayLength(&particles)) {
+        return;
+    }
+    step_particle(gid.x, g.time);
+}
+"#;
+const RESOLVE_MAIN: &str = r#"
+@compute @workgroup_size(8, 8)
+fn cs_resolve(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let dims = textureDimensions(state_out);
+    if (gid.x >= dims.x || gid.y >= dims.y) {
+        return;
+    }
+    let base = (gid.y * dims.x + gid.x) * 4u;
+    let splat = vec4<f32>(
+        f32(atomicExchange(&splat_buf[base + 0u], 0u)),
+        f32(atomicExchange(&splat_buf[base + 1u], 0u)),
+        f32(atomicExchange(&splat_buf[base + 2u], 0u)),
+        f32(atomicExchange(&splat_buf[base + 3u], 0u)),
+    ) / SPLAT_SCALE;
+    let uv = (vec2<f32>(gid.xy) + 0.5) / vec2<f32>(dims);
+    let p = vec2<f32>(uv.x * aspect(), 1.0 - uv.y);
+    let next_s = resolve_state(uv, p, g.time, splat);
+    let finite_s = select(vec4<f32>(0.0), next_s, next_s == next_s);
+    let safe = clamp(finite_s, vec4<f32>(-1000.0), vec4<f32>(1000.0));
+    textureStore(state_out, vec2<i32>(gid.xy), safe);
+}
+"#;
 const HACK_MAIN: &str = r#"
 @fragment
 fn fs_hack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
@@ -163,6 +195,7 @@ fn fs_hack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STATE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MAX_SUBSTEPS: u32 = 32;
+const PARTICLE_BYTES: u64 = 48;
 
 struct Offscreen {
     view: wgpu::TextureView,
@@ -174,7 +207,16 @@ struct StateTextures {
     views: [wgpu::TextureView; 2],
     clamp_bgs: [wgpu::BindGroup; 2],
     repeat_bgs: [wgpu::BindGroup; 2],
+    resolve_out_bgs: [wgpu::BindGroup; 2],
     size: [u32; 2],
+}
+
+struct ParticleBuffers {
+    particles: wgpu::Buffer,
+    splat: wgpu::Buffer,
+    bg: wgpu::BindGroup,
+    count: u32,
+    state_size: [u32; 2],
 }
 
 struct Slot {
@@ -202,6 +244,14 @@ pub struct Renderer {
     step_stride: usize,
     step_bg: wgpu::BindGroup,
     step_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
+    /// Tier P compute particle & splat resolve resources.
+    particle_bgl: wgpu::BindGroupLayout,
+    resolve_out_bgl: wgpu::BindGroupLayout,
+    particle_step_layout: wgpu::PipelineLayout,
+    particle_resolve_layout: wgpu::PipelineLayout,
+    particle_pipes: HashMap<&'static str, wgpu::ComputePipeline>,
+    resolve_pipes: HashMap<&'static str, wgpu::ComputePipeline>,
+    particles: Option<ParticleBuffers>,
     state_clamp_sampler: wgpu::Sampler,
     state_repeat_sampler: wgpu::Sampler,
     state: Option<StateTextures>,
@@ -341,11 +391,12 @@ impl Renderer {
         let step_stride = size_of::<Globals>().div_ceil(align) * align;
         let step_globals =
             buffer(device, "step_globals", (step_stride * MAX_SUBSTEPS as usize) as u64, uni);
+        let frag_comp = frag | comp;
         let step_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("step"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: frag,
+                visibility: frag_comp,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: true,
@@ -369,10 +420,10 @@ impl Renderer {
         let feedback_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("feedback"),
             entries: &[
-                texture_entry(0, frag),
+                texture_entry(0, frag_comp),
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: frag,
+                    visibility: frag_comp,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
@@ -388,6 +439,39 @@ impl Renderer {
             bind_group_layouts: &[Some(&step_bgl), Some(&feedback_bgl)],
             immediate_size: 0,
         });
+        let particle_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("particles"),
+            entries: &[storage_entry(0, comp, false), storage_entry(1, comp, false)],
+        });
+        let resolve_out_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("resolve_out"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: comp,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: STATE_FORMAT,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            }],
+        });
+        let particle_step_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("particle step"),
+            bind_group_layouts: &[Some(&step_bgl), Some(&feedback_bgl), Some(&particle_bgl)],
+            immediate_size: 0,
+        });
+        let particle_resolve_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("particle resolve"),
+                bind_group_layouts: &[
+                    Some(&step_bgl),
+                    Some(&feedback_bgl),
+                    Some(&particle_bgl),
+                    Some(&resolve_out_bgl),
+                ],
+                immediate_size: 0,
+            });
         let make_state_sampler = |label, mode| {
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some(label),
@@ -486,6 +570,13 @@ impl Renderer {
             step_stride,
             step_bg,
             step_pipes: HashMap::new(),
+            particle_bgl,
+            resolve_out_bgl,
+            particle_step_layout,
+            particle_resolve_layout,
+            particle_pipes: HashMap::new(),
+            resolve_pipes: HashMap::new(),
+            particles: None,
             state_clamp_sampler,
             state_repeat_sampler,
             state: None,
@@ -601,7 +692,8 @@ impl Renderer {
                 dimension: wgpu::TextureDimension::D2,
                 format: STATE_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::STORAGE_BINDING,
                 view_formats: &[],
             });
             tex.create_view(&Default::default())
@@ -631,8 +723,58 @@ impl Renderer {
             make_bg(&views[0], &self.state_repeat_sampler),
             make_bg(&views[1], &self.state_repeat_sampler),
         ];
-        self.state = Some(StateTextures { views, clamp_bgs, repeat_bgs, size });
+        let make_out_bg = |view: &wgpu::TextureView| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("resolve_out"),
+                layout: &self.resolve_out_bgl,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(view),
+                }],
+            })
+        };
+        let resolve_out_bgs = [make_out_bg(&views[0]), make_out_bg(&views[1])];
+        self.state = Some(StateTextures { views, clamp_bgs, repeat_bgs, resolve_out_bgs, size });
         true
+    }
+
+    fn ensure_particles(&mut self, count: u32, state_size: [u32; 2]) -> bool {
+        let count = count.max(1);
+        let state_size = [state_size[0].max(1), state_size[1].max(1)];
+        if self.particles.as_ref().is_some_and(|p| p.count == count && p.state_size == state_size) {
+            return false;
+        }
+        let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
+        let particles = buffer(&self.device, "particles", count as u64 * PARTICLE_BYTES, storage);
+        let splat_bytes = state_size[0] as u64 * state_size[1] as u64 * 16;
+        let splat = buffer(&self.device, "splat", splat_bytes, storage);
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("particles"),
+            layout: &self.particle_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: particles.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: splat.as_entire_binding() },
+            ],
+        });
+        self.particles = Some(ParticleBuffers { particles, splat, bg, count, state_size });
+        true
+    }
+
+    fn build_compute_pipeline(
+        &self,
+        label: &str,
+        layout: &wgpu::PipelineLayout,
+        module: &wgpu::ShaderModule,
+        entry: &str,
+    ) -> wgpu::ComputePipeline {
+        self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            module,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            cache: None,
+        })
     }
 
     /// Compile a hack ahead of time. A shader error comes back as an error
@@ -641,8 +783,11 @@ impl Renderer {
         if self.hack_pipes.contains_key(hack.id) {
             return Ok(());
         }
-        if hack.board && hack.feedback.is_some() {
-            return Err(anyhow!("hack {} cannot use both board and feedback", hack.id));
+        if hack.board && (hack.feedback.is_some() || hack.particles.is_some()) {
+            return Err(anyhow!("hack {} cannot mix board with feedback or particles", hack.id));
+        }
+        if hack.particles.is_some() && hack.feedback.is_none() {
+            return Err(anyhow!("hack {} uses particles without feedback", hack.id));
         }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let board = if hack.board {
@@ -656,18 +801,53 @@ impl Renderer {
         };
         let raymarch = if hack.raymarch { RAYMARCH } else { "" };
         let feedback = if hack.feedback.is_some() { FEEDBACK } else { "" };
-        let step_main = if hack.feedback.is_some() { STEP_MAIN } else { "" };
+        let particles = if hack.particles.is_some() { PARTICLES } else { "" };
+        let step_main = if hack.particles.is_some() {
+            format!("{PARTICLE_MAIN}\n{RESOLVE_MAIN}")
+        } else if hack.feedback.is_some() {
+            STEP_MAIN.to_string()
+        } else {
+            String::new()
+        };
         let source = format!(
-            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{}\n{step_main}\n{HACK_MAIN}",
+            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{particles}\n{}\n{step_main}\n{HACK_MAIN}",
             hack.source
         );
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(hack.id),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let step_pipe = hack.feedback.map(|_| {
-            self.build_pipeline(hack.id, &self.step_layout, &module, "fs_step", STATE_FORMAT)
-        });
+        let (step_pipe, particle_pipe, resolve_pipe) = if hack.particles.is_some() {
+            (
+                None,
+                Some(self.build_compute_pipeline(
+                    hack.id,
+                    &self.particle_step_layout,
+                    &module,
+                    "cs_particles",
+                )),
+                Some(self.build_compute_pipeline(
+                    hack.id,
+                    &self.particle_resolve_layout,
+                    &module,
+                    "cs_resolve",
+                )),
+            )
+        } else {
+            (
+                hack.feedback.map(|_| {
+                    self.build_pipeline(
+                        hack.id,
+                        &self.step_layout,
+                        &module,
+                        "fs_step",
+                        STATE_FORMAT,
+                    )
+                }),
+                None,
+                None,
+            )
+        };
         let hack_layout = if hack.board {
             &self.board_layout
         } else if hack.feedback.is_some() {
@@ -681,6 +861,12 @@ impl Renderer {
         }
         if let Some(step_pipe) = step_pipe {
             self.step_pipes.insert(hack.id, step_pipe);
+        }
+        if let Some(particle_pipe) = particle_pipe {
+            self.particle_pipes.insert(hack.id, particle_pipe);
+        }
+        if let Some(resolve_pipe) = resolve_pipe {
+            self.resolve_pipes.insert(hack.id, resolve_pipe);
         }
         self.hack_pipes.insert(hack.id, pipe);
         Ok(())
@@ -704,7 +890,9 @@ impl Renderer {
                 _ => off_size,
             };
             let recreated = self.ensure_state(state_size);
-            if recreated || self.state_hack != Some(frame.hack.id) {
+            let particles_recreated =
+                frame.hack.particles.is_some_and(|pt| self.ensure_particles(pt.count, state_size));
+            if recreated || particles_recreated || self.state_hack != Some(frame.hack.id) {
                 self.state_hack = Some(frame.hack.id);
                 self.state_needs_clear = true;
                 self.state_front = 0;
@@ -712,22 +900,29 @@ impl Renderer {
             }
             let state = self.state.as_ref().expect("state is ready");
             if self.state_needs_clear {
-                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("state clear"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &state.views[0],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
+                {
+                    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("state clear"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &state.views[0],
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                }
+                if frame.hack.particles.is_some() {
+                    let pbuf = self.particles.as_ref().expect("particles are ready");
+                    encoder.clear_buffer(&pbuf.particles, 0, None);
+                    encoder.clear_buffer(&pbuf.splat, 0, None);
+                }
                 self.state_needs_clear = false;
                 self.state_front = 0;
                 self.state_frame = 0;
@@ -757,32 +952,72 @@ impl Renderer {
             }
             self.queue.write_buffer(&self.step_globals, 0, &buf);
 
-            let step_pipe = &self.step_pipes[frame.hack.id];
-            for i in 0..steps {
-                let src = self.state_front;
-                let dst = 1 - src;
-                let fb_bg = if fb.wrap { &state.repeat_bgs[src] } else { &state.clamp_bgs[src] };
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("state step"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &state.views[dst],
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(step_pipe);
-                pass.set_bind_group(0, &self.step_bg, &[i * self.step_stride as u32]);
-                pass.set_bind_group(1, fb_bg, &[]);
-                pass.draw(0..3, 0..1);
-                self.state_front = dst;
+            if let Some(pt) = frame.hack.particles {
+                let pbuf = self.particles.as_ref().expect("particles are ready");
+                let particle_pipe = &self.particle_pipes[frame.hack.id];
+                let resolve_pipe = &self.resolve_pipes[frame.hack.id];
+                let p_groups = pt.count.max(1).div_ceil(64);
+                let r_groups = [state.size[0].div_ceil(8), state.size[1].div_ceil(8)];
+                for i in 0..steps {
+                    let src = self.state_front;
+                    let dst = 1 - src;
+                    let fb_bg =
+                        if fb.wrap { &state.repeat_bgs[src] } else { &state.clamp_bgs[src] };
+                    let dyn_off = i * self.step_stride as u32;
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("particles"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(particle_pipe);
+                        pass.set_bind_group(0, &self.step_bg, &[dyn_off]);
+                        pass.set_bind_group(1, fb_bg, &[]);
+                        pass.set_bind_group(2, &pbuf.bg, &[]);
+                        pass.dispatch_workgroups(p_groups, 1, 1);
+                    }
+                    {
+                        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("resolve"),
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(resolve_pipe);
+                        pass.set_bind_group(0, &self.step_bg, &[dyn_off]);
+                        pass.set_bind_group(1, fb_bg, &[]);
+                        pass.set_bind_group(2, &pbuf.bg, &[]);
+                        pass.set_bind_group(3, &state.resolve_out_bgs[dst], &[]);
+                        pass.dispatch_workgroups(r_groups[0], r_groups[1], 1);
+                    }
+                    self.state_front = dst;
+                }
+            } else {
+                let step_pipe = &self.step_pipes[frame.hack.id];
+                for i in 0..steps {
+                    let src = self.state_front;
+                    let dst = 1 - src;
+                    let fb_bg =
+                        if fb.wrap { &state.repeat_bgs[src] } else { &state.clamp_bgs[src] };
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("state step"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &state.views[dst],
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_pipeline(step_pipe);
+                    pass.set_bind_group(0, &self.step_bg, &[i * self.step_stride as u32]);
+                    pass.set_bind_group(1, fb_bg, &[]);
+                    pass.draw(0..3, 0..1);
+                    self.state_front = dst;
+                }
             }
             self.state_frame += steps as u64;
         } else {

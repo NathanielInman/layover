@@ -329,6 +329,7 @@ mod tests {
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6); return vec3<f32>(on * 0.9); }",
     };
 
@@ -341,6 +342,7 @@ mod tests {
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { return vec3<f32>(0.8 + 0.2 * sin(t * 3.0 + p.x * 40.0)); }",
     };
 
@@ -359,6 +361,7 @@ mod tests {
             max_height: None,
             wrap: false,
         }),
+        particles: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, _t: f32) -> vec4<f32> {
     if (g.frame < 0.5) {
@@ -388,6 +391,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
             max_height: None,
             wrap: false,
         }),
+        particles: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
     let prev = state_faded(uv).rgb;
@@ -396,6 +400,77 @@ fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
     let m = disc(length(p - c), 0.14, 0.04);
     let col = 0.5 + 0.5 * cos(t * 0.9 + vec3<f32>(0.0, 2.094, 4.188));
     return vec4<f32>(max(prev, col * m), 1.0);
+}
+fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return state_sample(state_uv(p)).rgb;
+}
+"#,
+    };
+
+    static UNFADED_PARTICLE_HACK: Hack = Hack {
+        id: "unfed-particle",
+        name: "Unfaded Particle",
+        about: "A compute particle hack that splats a still cluster on frame 0 and never fades it.",
+        text_heavy: false,
+        hue_turn: false,
+        board: false,
+        raymarch: false,
+        feedback: Some(crate::Feedback {
+            fade_secs: 0.0,
+            step_hz: 1.0,
+            max_steps: 1,
+            max_height: None,
+            wrap: false,
+        }),
+        particles: Some(crate::Particles { count: 256 }),
+        source: r#"
+fn step_particle(idx: u32, _t: f32) {
+    if (g.frame < 0.5) {
+        let fx = f32(idx % 16u) / 15.0;
+        let fy = f32(idx / 16u) / 15.0;
+        let pos = vec2<f32>(1.65 + fx * 0.30, 0.40 + fy * 0.22);
+        splat_point(pos, vec3<f32>(0.9), 1.0);
+    }
+}
+fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec4<f32> {
+    return clamp(state_faded(uv) + splat, vec4<f32>(0.0), vec4<f32>(1.0));
+}
+fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return state_sample(state_uv(p)).rgb;
+}
+"#,
+    };
+
+    static FADING_PARTICLE_HACK: Hack = Hack {
+        id: "fading-particle",
+        name: "Fading Particle",
+        about: "Compute particles orbiting across the canvas and leaving fading trails.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(crate::Feedback {
+            fade_secs: 2.5,
+            step_hz: 1.0,
+            max_steps: 1,
+            max_height: None,
+            wrap: false,
+        }),
+        particles: Some(crate::Particles { count: 256 }),
+        source: r#"
+fn step_particle(idx: u32, t: f32) {
+    let fi = f32(idx);
+    let a = aspect();
+    let phase = fi * 0.02454369 + g.seed * TAU;
+    let c = vec2<f32>(
+        a * (0.5 + 0.38 * sin(t * 0.53 + phase)),
+        0.5 + 0.34 * cos(t * 0.71 + phase * 1.7)
+    );
+    let col = 0.5 + 0.5 * cos(t * 0.4 + phase + vec3<f32>(0.0, 2.094, 4.188));
+    splat_disc(c, 0.08, col * 0.85, 1.0, false);
+}
+fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec4<f32> {
+    return clamp(state_faded(uv) + splat * 0.4, vec4<f32>(0.0), vec4<f32>(1.0));
 }
 fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
     return state_sample(state_uv(p)).rgb;
@@ -437,6 +512,36 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
         let (care, _) = shipped();
         let a = run(&gpu, &FADING_STATEFUL_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
         let b = run(&gpu, &FADING_STATEFUL_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert_eq!(a.average, b.average);
+        assert_eq!(a.max_dwell_secs, b.max_dwell_secs);
+        assert_eq!(a.hot_spot, b.hot_spot);
+        assert_eq!(a.peak, b.peak);
+    }
+
+    #[test]
+    fn an_unfaded_particle_hack_fails_wear() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &UNFADED_PARTICLE_HACK, &care, 60, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.max_dwell_secs > budget.max_dwell_secs, "{}", report.summary());
+        assert!(!report.failures(&budget).is_empty());
+    }
+
+    #[test]
+    fn a_fading_particle_hack_passes_wear() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &FADING_PARTICLE_HACK, &care, 120, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.failures(&budget).is_empty(), "{}", report.summary());
+        assert!(report.average > 0.002, "{}", report.summary());
+    }
+
+    #[test]
+    fn particle_wear_is_deterministic_from_seed() {
+        let Some(gpu) = gpu() else { return };
+        let (care, _) = shipped();
+        let a = run(&gpu, &FADING_PARTICLE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        let b = run(&gpu, &FADING_PARTICLE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
         assert_eq!(a.average, b.average);
         assert_eq!(a.max_dwell_secs, b.max_dwell_secs);
         assert_eq!(a.hot_spot, b.hot_spot);

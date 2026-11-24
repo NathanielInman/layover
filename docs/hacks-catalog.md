@@ -15,11 +15,13 @@ Every Layover hack is one WGSL fragment shader (`crates/layover-hacks/src/hacks/
 on top of `prelude.wgsl`. It gets time, canvas size and the board's storage
 buffer, draws one pixel at a time, and keeps no memory between frames unless it
 opts into Tier S (`feedback: Some(...)`), which steps ping-pong `Rgba16Float`
-state textures with a per-hack fade before drawing. The care pass and the
-limiter run after it. That covers anything a pixel can work out from time and
-position alone (fields, waves, fractals, tunnels, raymarched 3D) plus
-reaction-diffusion and other continuous state fields. The Departure Board shows
-a glyph atlas works too.
+state textures with a per-hack fade before drawing, or Tier P
+(`particles: Some(...)`), which runs persistent compute particles and atomic
+splats into the feedback canvas for attractors, flames, fireworks and swarms.
+The care pass and the limiter run after it. That covers anything a pixel can
+work out from time and position alone (fields, waves, fractals, tunnels,
+raymarched 3D), continuous state fields and compute particle systems. The
+Departure Board shows a glyph atlas works too.
 
 Most of xscreensaver is not like that. Its hacks draw onto a canvas that
 keeps what was drawn, move thousands of particles, or render meshes. Each tier
@@ -30,7 +32,7 @@ below names what the renderer would gain to cover it.
 | F | a fragment shader | works today |
 | R | raymarching helpers in the prelude (SDFs, normals, soft light) | works today |
 | S | state: ping-pong feedback textures that persist between frames | works today |
-| P | particles: storage buffers and a compute pass | engine task |
+| P | particles: storage buffers and a compute pass | works today |
 | L | lines and shapes: instanced quads with SDF edges | engine task |
 | M | meshes: vertex buffers and a depth buffer | engine task |
 | T | text: the glyph atlas the Departure Board already has | works today |

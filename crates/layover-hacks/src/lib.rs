@@ -22,6 +22,14 @@ pub struct Feedback {
     pub wrap: bool,
 }
 
+/// Configuration for a Tier P compute particle hack (storage buffer + atomic splat
+/// pass resolved into the Tier S ping-pong `rgba16f` feedback canvas).
+#[derive(Clone, Copy, Debug)]
+pub struct Particles {
+    /// Number of persistent particles in the GPU storage buffer (`array<Particle>`).
+    pub count: u32,
+}
+
 /// A hack: a WGSL `hack(p, t)` function and what the renderer needs to know
 /// about it.
 #[derive(Debug)]
@@ -41,6 +49,8 @@ pub struct Hack {
     pub raymarch: bool,
     /// Uses Tier S ping-pong `rgba16f` feedback textures (`step_state`).
     pub feedback: Option<Feedback>,
+    /// Uses Tier P persistent compute particles and atomic splats (`step_particle`, `resolve_state`).
+    pub particles: Option<Particles>,
     pub source: &'static str,
 }
 
@@ -54,6 +64,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/night-mail.wgsl"),
     },
     Hack {
@@ -65,6 +76,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/frost-aurora.wgsl"),
     },
     Hack {
@@ -76,6 +88,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/signal-lamps.wgsl"),
     },
     Hack {
@@ -87,6 +100,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/starfield.wgsl"),
     },
     Hack {
@@ -98,6 +112,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: true,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/menger-vault.wgsl"),
     },
     Hack {
@@ -109,6 +124,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/quasi-lattice.wgsl"),
     },
     Hack {
@@ -120,6 +136,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/ripple-tank.wgsl"),
     },
     Hack {
@@ -131,6 +148,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/moire-loom.wgsl"),
     },
     Hack {
@@ -142,6 +160,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/julia-filigree.wgsl"),
     },
     Hack {
@@ -153,6 +172,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/prism-barrel.wgsl"),
     },
     Hack {
@@ -164,6 +184,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/helix-tunnel.wgsl"),
     },
     Hack {
@@ -175,6 +196,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/pulsar-ridge.wgsl"),
     },
     Hack {
@@ -186,6 +208,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/truchet-weave.wgsl"),
     },
     Hack {
@@ -197,6 +220,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/voronoi-glass.wgsl"),
     },
     Hack {
@@ -208,6 +232,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/apollonian-lace.wgsl"),
     },
     Hack {
@@ -219,6 +244,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/marble-vein.wgsl"),
     },
     Hack {
@@ -230,6 +256,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/flux-grid.wgsl"),
     },
     Hack {
@@ -241,6 +268,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: true,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/lava-drift.wgsl"),
     },
     Hack {
@@ -252,6 +280,7 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: true,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/klein-fold.wgsl"),
     },
     Hack {
@@ -269,6 +298,7 @@ pub const HACKS: &[Hack] = &[
             max_height: Some(240),
             wrap: true,
         }),
+        particles: None,
         source: include_str!("hacks/reagent-bloom.wgsl"),
     },
     Hack {
@@ -286,6 +316,7 @@ pub const HACKS: &[Hack] = &[
             max_height: Some(240),
             wrap: true,
         }),
+        particles: None,
         source: include_str!("hacks/fault-strata.wgsl"),
     },
     Hack {
@@ -303,6 +334,7 @@ pub const HACKS: &[Hack] = &[
             max_height: Some(240),
             wrap: true,
         }),
+        particles: None,
         source: include_str!("hacks/ember-plume.wgsl"),
     },
     Hack {
@@ -320,6 +352,7 @@ pub const HACKS: &[Hack] = &[
             max_height: Some(96),
             wrap: true,
         }),
+        particles: None,
         source: include_str!("hacks/spore-cloud.wgsl"),
     },
     Hack {
@@ -337,6 +370,7 @@ pub const HACKS: &[Hack] = &[
             max_height: Some(160),
             wrap: true,
         }),
+        particles: None,
         source: include_str!("hacks/crystal-reef.wgsl"),
     },
     Hack {
@@ -348,6 +382,7 @@ pub const HACKS: &[Hack] = &[
         board: true,
         raymarch: false,
         feedback: None,
+        particles: None,
         source: include_str!("hacks/departure-board.wgsl"),
     },
 ];
@@ -440,5 +475,16 @@ mod tests {
         assert_eq!(rotation(&[]).unwrap().len(), HACKS.len());
         assert_eq!(rotation(&["starfield".into()]).unwrap()[0].id, "starfield");
         assert!(rotation(&["nope".into()]).unwrap_err().contains("nope"));
+    }
+
+    #[test]
+    fn particle_hacks_require_feedback_and_nonzero_count() {
+        for h in HACKS {
+            if let Some(p) = h.particles {
+                assert!(h.feedback.is_some(), "{} uses particles without feedback", h.id);
+                assert!(p.count > 0, "{} has zero particles", h.id);
+                assert!(!h.board, "{} mixes board and particles", h.id);
+            }
+        }
     }
 }

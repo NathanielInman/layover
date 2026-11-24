@@ -144,14 +144,20 @@ picture. `t` is seconds since the saver started. The prelude
 (`hacks/prelude.wgsl`) has the uniforms, hashes, noise and 3D SDF primitives;
 a hack with `raymarch: true` also gets `hacks/raymarch.wgsl` (sphere tracing,
 tetrahedron normals, ambient occlusion and soft shadows over its `sdf(p, t)`),
-and a hack with `feedback: Some(...)` gets `hacks/feedback.wgsl` and ping-pong
+a hack with `feedback: Some(...)` also gets `hacks/feedback.wgsl` and ping-pong
 `Rgba16Float` state textures stepped by `step_state(uv, p, t)` with per-hack
-exponential fade (`g.fade = exp(-dt / fade_secs)`).
+exponential fade (`g.fade = exp(-dt / fade_secs)`), and a hack with
+`particles: Some(...)` also gets `hacks/particles.wgsl` (persistent `Particle`
+storage buffer, atomic fixed-point splat helpers and `step_particle(idx, t)` /
+`resolve_state(uv, p, t, splat)` compute passes resolving into the ping-pong
+state textures).
 
 Each frame:
 
 1. Stateful hacks (`feedback`) first step their ping-pong state texture through
-   `step_state`, fading older history on the hack's clock.
+   `step_state` (or for Tier P `particles`, run `step_particle` and
+   `resolve_state` compute passes into the feedback texture), fading older
+   history on the hack's clock.
 2. The hack pass draws the whole canvas into one offscreen texture at
    `power.render_scale`, with the orbit offset added to every position.
 3. The limiter pass measures the average level on a sparse grid and eases a
@@ -199,11 +205,12 @@ measures:
 | Peak drive | `care.max_drive` |
 
 `cargo test` runs it for every hack against the shipped budget (it needs a
-GPU adapter; CI uses Mesa's lavapipe). Stateful hacks run with their
-persistent ping-pong state from a fixed seed so accumulation and fades are
-measured, and a test verifies that an unfaded stateful hack fails the dwell
-budget. `layover wear <hack>` runs it against your config and writes a heat map
-PNG.
+GPU adapter; CI uses Mesa's lavapipe). Stateful and particle hacks run with
+their persistent ping-pong state (and particle storage buffer) from a fixed
+seed so accumulation and fades are measured, and tests verify that both an
+unfaded stateful hack and an unfaded particle hack fail the dwell budget while
+fading ones pass deterministically. `layover wear <hack>` runs it against your
+config and writes a heat map PNG.
 
 ## Config
 
