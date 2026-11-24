@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil, Star Shell and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the twenty-six hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the twenty-seven hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -111,6 +111,7 @@ HACK_ROWS = [
     ("Spore Cloud", "Competing cellular-automaton colonies and age-limited Life clouds blooming, colliding and fading across the dark (after Cloudlife by Don Marti and Petri by Dan Bornstein).", "5.6%", "6s", "6.3%"),
     ("Crystal Reef", "Branching coral dendrites and faceted frost crystals accreting and dissolving across the dark (after Coral by Frederick Roeber and Crystal by Jouk Jansen).", "5.0%", "6s", "5.7%"),
     ("Flame Veil", "Luminous iterated-function fractal flames and drifting IFS attractors woven across the dark (after Flame by Scott Draves and Patrick Naughton, and IFS by Pascal Massimino).", "5.4%", "10s", "5.8%"),
+    ("Star Shell", "Aerial chrysanthemum, willow, ring and strobe firework shells climbing and bursting into drifting spark trails across the dark (after Fireworkx by Rony B. Chandran and Pyro by Jamie Zawinski).", "4.1%", "5s", "8.5%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -471,6 +472,7 @@ WEAR = [
     ("spore-cloud", "5.6%", " 6s", " 6.3%"),
     ("crystal-reef", "5.0%", " 6s", " 5.7%"),
     ("flame-veil", "5.4%", "10s", " 5.8%"),
+    ("star-shell", "4.1%", " 5s", " 8.5%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
