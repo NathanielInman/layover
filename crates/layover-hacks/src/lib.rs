@@ -272,6 +272,23 @@ pub const HACKS: &[Hack] = &[
         source: include_str!("hacks/reagent-bloom.wgsl"),
     },
     Hack {
+        id: "fault-strata",
+        name: "Fault Strata",
+        about: "Growing crystalline cracks halting in T-junctions with one-sided watercolor sand strata drifting across the dark (after Substrate by Jared Tarbell and Mike Kershaw).",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(Feedback {
+            fade_secs: 6.8,
+            step_hz: 50.0,
+            max_steps: 15,
+            max_height: Some(240),
+            wrap: true,
+        }),
+        source: include_str!("hacks/fault-strata.wgsl"),
+    },
+    Hack {
         id: "departure-board",
         name: "Departure Board",
         about: "Split-flap rows from the other tools on the desk: states and counts, never titles.",
