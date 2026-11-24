@@ -90,6 +90,10 @@ struct Globals {
     orbit: [f32; 2],
     time: f32,
     seed: f32,
+    dt: f32,
+    fade: f32,
+    frame: f32,
+    _pad: f32,
 }
 
 #[repr(C)]
@@ -118,6 +122,7 @@ struct CareU {
 
 const PRELUDE: &str = include_str!("hacks/prelude.wgsl");
 const RAYMARCH: &str = include_str!("hacks/raymarch.wgsl");
+const FEEDBACK: &str = include_str!("hacks/feedback.wgsl");
 
 /// The board binding, for hacks with `board: true`.
 const BOARD_BINDING: &str = r#"
@@ -136,6 +141,15 @@ fn board_changed(i: u32) -> f32 {
     return board.changed[i / 4u][i % 4u];
 }
 "#;
+const STEP_MAIN: &str = r#"
+@fragment
+fn fs_step(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let uv = pos.xy / g.target_size;
+    let p = vec2<f32>(uv.x * aspect(), 1.0 - uv.y);
+    let s = step_state(uv, p, g.time);
+    return clamp(s, vec4<f32>(-100.0), vec4<f32>(100.0));
+}
+"#;
 const HACK_MAIN: &str = r#"
 @fragment
 fn fs_hack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
@@ -147,11 +161,20 @@ fn fs_hack(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 "#;
 
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const STATE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const MAX_SUBSTEPS: u32 = 32;
 
 struct Offscreen {
     view: wgpu::TextureView,
     size: [u32; 2],
     limiter_bg: wgpu::BindGroup,
+}
+
+struct StateTextures {
+    views: [wgpu::TextureView; 2],
+    clamp_bgs: [wgpu::BindGroup; 2],
+    repeat_bgs: [wgpu::BindGroup; 2],
+    size: [u32; 2],
 }
 
 struct Slot {
@@ -171,6 +194,21 @@ pub struct Renderer {
     board_layout: wgpu::PipelineLayout,
     board_buf: wgpu::Buffer,
     board_bg: wgpu::BindGroup,
+    /// Tier S feedback state ping-pong resources.
+    feedback_bgl: wgpu::BindGroupLayout,
+    feedback_hack_layout: wgpu::PipelineLayout,
+    step_layout: wgpu::PipelineLayout,
+    step_globals: wgpu::Buffer,
+    step_stride: usize,
+    step_bg: wgpu::BindGroup,
+    step_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
+    state_clamp_sampler: wgpu::Sampler,
+    state_repeat_sampler: wgpu::Sampler,
+    state: Option<StateTextures>,
+    state_hack: Option<&'static str>,
+    state_front: usize,
+    state_frame: u64,
+    state_needs_clear: bool,
     /// Cheap mode dims everything by this (1 otherwise).
     dim: f32,
     hack_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
@@ -298,6 +336,71 @@ impl Renderer {
             immediate_size: 0,
         });
 
+        let globals_size = wgpu::BufferSize::new(size_of::<Globals>() as u64);
+        let align = device.limits().min_uniform_buffer_offset_alignment.max(1) as usize;
+        let step_stride = size_of::<Globals>().div_ceil(align) * align;
+        let step_globals =
+            buffer(device, "step_globals", (step_stride * MAX_SUBSTEPS as usize) as u64, uni);
+        let step_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("step"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: frag,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: globals_size,
+                },
+                count: None,
+            }],
+        });
+        let step_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("step"),
+            layout: &step_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &step_globals,
+                    offset: 0,
+                    size: globals_size,
+                }),
+            }],
+        });
+        let feedback_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("feedback"),
+            entries: &[
+                texture_entry(0, frag),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: frag,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let feedback_hack_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("feedback hack"),
+            bind_group_layouts: &[Some(&hack_bgl), Some(&feedback_bgl)],
+            immediate_size: 0,
+        });
+        let step_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("step"),
+            bind_group_layouts: &[Some(&step_bgl), Some(&feedback_bgl)],
+            immediate_size: 0,
+        });
+        let make_state_sampler = |label, mode| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: mode,
+                address_mode_v: mode,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            })
+        };
+        let state_clamp_sampler = make_state_sampler("state clamp", wgpu::AddressMode::ClampToEdge);
+        let state_repeat_sampler = make_state_sampler("state repeat", wgpu::AddressMode::Repeat);
+
         let limit = buffer(device, "limit", size_of::<Limit>() as u64, uni);
         let gain = buffer(
             device,
@@ -376,6 +479,20 @@ impl Renderer {
             board_layout,
             board_buf,
             board_bg,
+            feedback_bgl,
+            feedback_hack_layout,
+            step_layout,
+            step_globals,
+            step_stride,
+            step_bg,
+            step_pipes: HashMap::new(),
+            state_clamp_sampler,
+            state_repeat_sampler,
+            state: None,
+            state_hack: None,
+            state_front: 0,
+            state_frame: 0,
+            state_needs_clear: true,
             dim: 1.0,
             hack_pipes: HashMap::new(),
             globals,
@@ -435,11 +552,97 @@ impl Renderer {
         self.slots.clear();
     }
 
+    fn build_pipeline(
+        &self,
+        label: &str,
+        layout: &wgpu::PipelineLayout,
+        module: &wgpu::ShaderModule,
+        entry: &str,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
+    fn ensure_state(&mut self, size: [u32; 2]) -> bool {
+        let size = [size[0].max(1), size[1].max(1)];
+        if self.state.as_ref().is_some_and(|s| s.size == size) {
+            return false;
+        }
+        let make_tex = |label| {
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: STATE_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            tex.create_view(&Default::default())
+        };
+        let views = [make_tex("state 0"), make_tex("state 1")];
+        let make_bg = |view: &wgpu::TextureView, sampler: &wgpu::Sampler| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("feedback"),
+                layout: &self.feedback_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            })
+        };
+        let clamp_bgs = [
+            make_bg(&views[0], &self.state_clamp_sampler),
+            make_bg(&views[1], &self.state_clamp_sampler),
+        ];
+        let repeat_bgs = [
+            make_bg(&views[0], &self.state_repeat_sampler),
+            make_bg(&views[1], &self.state_repeat_sampler),
+        ];
+        self.state = Some(StateTextures { views, clamp_bgs, repeat_bgs, size });
+        true
+    }
+
     /// Compile a hack ahead of time. A shader error comes back as an error
     /// instead of taking the process down.
     pub fn prepare(&mut self, hack: &'static Hack) -> Result<()> {
         if self.hack_pipes.contains_key(hack.id) {
             return Ok(());
+        }
+        if hack.board && hack.feedback.is_some() {
+            return Err(anyhow!("hack {} cannot use both board and feedback", hack.id));
         }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let board = if hack.board {
@@ -452,38 +655,32 @@ impl Renderer {
             String::new()
         };
         let raymarch = if hack.raymarch { RAYMARCH } else { "" };
-        let source = format!("{PRELUDE}\n{raymarch}\n{board}\n{}\n{HACK_MAIN}", hack.source);
+        let feedback = if hack.feedback.is_some() { FEEDBACK } else { "" };
+        let step_main = if hack.feedback.is_some() { STEP_MAIN } else { "" };
+        let source = format!(
+            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{}\n{step_main}\n{HACK_MAIN}",
+            hack.source
+        );
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(hack.id),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
-        let pipe = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(hack.id),
-            layout: Some(if hack.board { &self.board_layout } else { &self.hack_layout }),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_hack"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: OFFSCREEN_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
+        let step_pipe = hack.feedback.map(|_| {
+            self.build_pipeline(hack.id, &self.step_layout, &module, "fs_step", STATE_FORMAT)
         });
+        let hack_layout = if hack.board {
+            &self.board_layout
+        } else if hack.feedback.is_some() {
+            &self.feedback_hack_layout
+        } else {
+            &self.hack_layout
+        };
+        let pipe = self.build_pipeline(hack.id, hack_layout, &module, "fs_hack", OFFSCREEN_FORMAT);
         if let Some(err) = pollster::block_on(scope.pop()) {
             return Err(anyhow!("hack {} does not compile: {err}", hack.id));
+        }
+        if let Some(step_pipe) = step_pipe {
+            self.step_pipes.insert(hack.id, step_pipe);
         }
         self.hack_pipes.insert(hack.id, pipe);
         Ok(())
@@ -492,13 +689,117 @@ impl Renderer {
     /// Draw the hack over the whole canvas and run the limiter.
     pub fn draw_canvas(&mut self, encoder: &mut wgpu::CommandEncoder, frame: &Frame) -> Result<()> {
         self.prepare(frame.hack)?;
-        let off = self.offscreen.as_ref().ok_or_else(|| anyhow!("resize before drawing"))?;
+        let off_size =
+            self.offscreen.as_ref().ok_or_else(|| anyhow!("resize before drawing"))?.size;
+
+        if let Some(fb) = frame.hack.feedback {
+            let state_size = match fb.max_height {
+                Some(max_h) if off_size[1] > max_h => {
+                    let h = max_h.max(1);
+                    let w = ((h as f32) * (self.canvas[0] / self.canvas[1].max(1.0)))
+                        .round()
+                        .max(1.0) as u32;
+                    [w, h]
+                }
+                _ => off_size,
+            };
+            let recreated = self.ensure_state(state_size);
+            if recreated || self.state_hack != Some(frame.hack.id) {
+                self.state_hack = Some(frame.hack.id);
+                self.state_needs_clear = true;
+                self.state_front = 0;
+                self.state_frame = 0;
+            }
+            let state = self.state.as_ref().expect("state is ready");
+            if self.state_needs_clear {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("state clear"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &state.views[0],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                self.state_needs_clear = false;
+                self.state_front = 0;
+                self.state_frame = 0;
+            }
+
+            let dt = frame.dt.max(1e-4);
+            let max_steps = fb.max_steps.clamp(1, MAX_SUBSTEPS);
+            let steps = (dt * fb.step_hz).round().clamp(1.0, max_steps as f32) as u32;
+            let step_dt = dt / steps as f32;
+            let fade = if fb.fade_secs > 0.0 { (-step_dt / fb.fade_secs).exp() } else { 1.0 };
+
+            let mut buf = vec![0u8; steps as usize * self.step_stride];
+            for i in 0..steps {
+                let g = Globals {
+                    canvas: self.canvas,
+                    target_size: [state.size[0] as f32, state.size[1] as f32],
+                    orbit: [0.0, 0.0],
+                    time: frame.t + step_dt * i as f32,
+                    seed: frame.seed,
+                    dt: step_dt,
+                    fade,
+                    frame: (self.state_frame + i as u64) as f32,
+                    _pad: 0.0,
+                };
+                let start = i as usize * self.step_stride;
+                buf[start..start + size_of::<Globals>()].copy_from_slice(bytemuck::bytes_of(&g));
+            }
+            self.queue.write_buffer(&self.step_globals, 0, &buf);
+
+            let step_pipe = &self.step_pipes[frame.hack.id];
+            for i in 0..steps {
+                let src = self.state_front;
+                let dst = 1 - src;
+                let fb_bg = if fb.wrap { &state.repeat_bgs[src] } else { &state.clamp_bgs[src] };
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("state step"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &state.views[dst],
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(step_pipe);
+                pass.set_bind_group(0, &self.step_bg, &[i * self.step_stride as u32]);
+                pass.set_bind_group(1, fb_bg, &[]);
+                pass.draw(0..3, 0..1);
+                self.state_front = dst;
+            }
+            self.state_frame += steps as u64;
+        } else {
+            self.state_hack = None;
+        }
+
+        let off = self.offscreen.as_ref().expect("offscreen is ready");
         let globals = Globals {
             canvas: self.canvas,
             target_size: [off.size[0] as f32, off.size[1] as f32],
             orbit: self.care.orbit(frame.phase, self.canvas[1]),
             time: frame.t,
             seed: frame.seed,
+            dt: frame.dt.max(0.0),
+            fade: 1.0,
+            frame: self.state_frame as f32,
+            _pad: 0.0,
         };
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let limit = Limit {
@@ -533,6 +834,14 @@ impl Renderer {
             pass.set_bind_group(0, &self.hack_bg, &[]);
             if frame.hack.board {
                 pass.set_bind_group(1, &self.board_bg, &[]);
+            } else if let Some(fb) = frame.hack.feedback {
+                let state = self.state.as_ref().expect("state is ready");
+                let fb_bg = if fb.wrap {
+                    &state.repeat_bgs[self.state_front]
+                } else {
+                    &state.clamp_bgs[self.state_front]
+                };
+                pass.set_bind_group(1, fb_bg, &[]);
             }
             pass.draw(0..3, 0..1);
         }
@@ -568,34 +877,21 @@ impl Renderer {
         self.queue.write_buffer(&self.gain, 0, bytemuck::bytes_of(&[0.0f32, 0.0f32]));
     }
 
+    /// Forget ping-pong feedback state, for a new run.
+    pub fn reset_state(&mut self) {
+        self.state_hack = None;
+        self.state_front = 0;
+        self.state_frame = 0;
+        self.state_needs_clear = true;
+    }
+
     fn care_pipe(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
-        self.care_pipes.entry(format).or_insert_with(|| {
-            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("care"),
-                layout: Some(&self.care_layout),
-                vertex: wgpu::VertexState {
-                    module: &self.care_module,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.care_module,
-                    entry_point: Some("fs"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        })
+        if !self.care_pipes.contains_key(&format) {
+            let pipe =
+                self.build_pipeline("care", &self.care_layout, &self.care_module, "fs", format);
+            self.care_pipes.insert(format, pipe);
+        }
+        &self.care_pipes[&format]
     }
 
     /// Draw one output's part of the canvas through the care pass. `slot`

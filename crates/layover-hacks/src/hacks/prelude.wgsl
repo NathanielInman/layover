@@ -10,6 +10,10 @@ struct Globals {
     orbit: vec2<f32>,
     time: f32,
     seed: f32,
+    dt: f32,
+    fade: f32,
+    frame: f32,
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;

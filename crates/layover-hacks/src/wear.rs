@@ -165,6 +165,7 @@ pub fn run(
     let mut renderer = Renderer::new(device, &gpu.queue, care.clone());
     renderer.resize(canvas, size);
     renderer.reset_limiter();
+    renderer.reset_state();
     renderer.prepare(hack)?;
     if hack.board {
         renderer.set_board(&crate::board::BoardData::sample());
@@ -327,6 +328,7 @@ mod tests {
         hue_turn: false,
         board: false,
         raymarch: false,
+        feedback: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6); return vec3<f32>(on * 0.9); }",
     };
 
@@ -338,7 +340,67 @@ mod tests {
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { return vec3<f32>(0.8 + 0.2 * sin(t * 3.0 + p.x * 40.0)); }",
+    };
+
+    static UNFADED_STATEFUL_HACK: Hack = Hack {
+        id: "unfed-stateful",
+        name: "Unfaded Stateful",
+        about: "A stateful hack that paints a patch on frame 0 and never fades it.",
+        text_heavy: false,
+        hue_turn: false,
+        board: false,
+        raymarch: false,
+        feedback: Some(crate::Feedback {
+            fade_secs: 0.0,
+            step_hz: 1.0,
+            max_steps: 1,
+            max_height: None,
+            wrap: false,
+        }),
+        source: r#"
+fn step_state(uv: vec2<f32>, p: vec2<f32>, _t: f32) -> vec4<f32> {
+    if (g.frame < 0.5) {
+        let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6);
+        return vec4<f32>(vec3<f32>(on * 0.9), 1.0);
+    }
+    return state_faded(uv);
+}
+fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return state_sample(state_uv(p)).rgb;
+}
+"#,
+    };
+
+    static FADING_STATEFUL_HACK: Hack = Hack {
+        id: "fading-stateful",
+        name: "Fading Stateful",
+        about: "A moving disc leaving a fading trail in state.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(crate::Feedback {
+            fade_secs: 3.0,
+            step_hz: 1.0,
+            max_steps: 1,
+            max_height: None,
+            wrap: false,
+        }),
+        source: r#"
+fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
+    let prev = state_faded(uv).rgb;
+    let a = aspect();
+    let c = vec2<f32>(a * (0.5 + 0.35 * sin(t * 0.7)), 0.5 + 0.32 * cos(t * 1.1));
+    let m = disc(length(p - c), 0.14, 0.04);
+    let col = 0.5 + 0.5 * cos(t * 0.9 + vec3<f32>(0.0, 2.094, 4.188));
+    return vec4<f32>(max(prev, col * m), 1.0);
+}
+fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return state_sample(state_uv(p)).rgb;
+}
+"#,
     };
 
     /// The test catches what it exists to catch.
@@ -349,6 +411,36 @@ mod tests {
         let report = run(&gpu, &STILL_HACK, &care, 60, [64, 18], G9_CANVAS).unwrap();
         assert!(report.max_dwell_secs > budget.max_dwell_secs, "{}", report.summary());
         assert!(!report.failures(&budget).is_empty());
+    }
+
+    #[test]
+    fn a_stateful_hack_that_never_fades_fails_wear() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &UNFADED_STATEFUL_HACK, &care, 60, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.max_dwell_secs > budget.max_dwell_secs, "{}", report.summary());
+        assert!(!report.failures(&budget).is_empty());
+    }
+
+    #[test]
+    fn a_fading_stateful_hack_passes_wear() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &FADING_STATEFUL_HACK, &care, 120, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.failures(&budget).is_empty(), "{}", report.summary());
+        assert!(report.average > 0.002, "{}", report.summary());
+    }
+
+    #[test]
+    fn stateful_wear_is_deterministic_from_seed() {
+        let Some(gpu) = gpu() else { return };
+        let (care, _) = shipped();
+        let a = run(&gpu, &FADING_STATEFUL_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        let b = run(&gpu, &FADING_STATEFUL_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert_eq!(a.average, b.average);
+        assert_eq!(a.max_dwell_secs, b.max_dwell_secs);
+        assert_eq!(a.hot_spot, b.hot_spot);
+        assert_eq!(a.peak, b.peak);
     }
 
     /// The limiter and the caps hold a full-white hack to the budget.

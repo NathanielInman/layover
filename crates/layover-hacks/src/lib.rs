@@ -5,6 +5,23 @@ pub mod gpu;
 pub mod renderer;
 pub mod wear;
 
+/// Configuration for a Tier S stateful hack (ping-pong `rgba16f` feedback).
+#[derive(Clone, Copy, Debug)]
+pub struct Feedback {
+    /// Exponential fade time constant in seconds (`g.fade = exp(-step_dt / fade_secs)`).
+    /// History decays at the same real-time rate at any frame rate (60/30/15/1 fps).
+    /// `0.0` disables decay (`g.fade = 1.0`), used only in negative wear tests.
+    pub fade_secs: f32,
+    /// Target simulation steps per second (e.g. 60.0 for PDEs, 1.0 for 1-step trails).
+    pub step_hz: f32,
+    /// Hard cap on substeps per `draw_canvas` call (keeps 1 fps wear tests fast on lavapipe).
+    pub max_steps: u32,
+    /// Optional cap on state texture height in pixels (`None` uses the full offscreen size).
+    pub max_height: Option<u32>,
+    /// Whether `state_tex` wraps toroidally (`Repeat`) or clamps (`ClampToEdge`).
+    pub wrap: bool,
+}
+
 /// A hack: a WGSL `hack(p, t)` function and what the renderer needs to know
 /// about it.
 #[derive(Debug)]
@@ -22,6 +39,8 @@ pub struct Hack {
     pub board: bool,
     /// Uses the Tier R raymarch helpers (`rm_march`, `rm_normal`, `rm_ao`, `rm_shadow`).
     pub raymarch: bool,
+    /// Uses Tier S ping-pong `rgba16f` feedback textures (`step_state`).
+    pub feedback: Option<Feedback>,
     pub source: &'static str,
 }
 
@@ -34,6 +53,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/night-mail.wgsl"),
     },
     Hack {
@@ -44,6 +64,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/frost-aurora.wgsl"),
     },
     Hack {
@@ -54,6 +75,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/signal-lamps.wgsl"),
     },
     Hack {
@@ -64,6 +86,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/starfield.wgsl"),
     },
     Hack {
@@ -74,6 +97,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: true,
+        feedback: None,
         source: include_str!("hacks/menger-vault.wgsl"),
     },
     Hack {
@@ -84,6 +108,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/quasi-lattice.wgsl"),
     },
     Hack {
@@ -94,6 +119,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/ripple-tank.wgsl"),
     },
     Hack {
@@ -104,6 +130,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/moire-loom.wgsl"),
     },
     Hack {
@@ -114,6 +141,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/julia-filigree.wgsl"),
     },
     Hack {
@@ -124,6 +152,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/prism-barrel.wgsl"),
     },
     Hack {
@@ -134,6 +163,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/helix-tunnel.wgsl"),
     },
     Hack {
@@ -144,6 +174,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/pulsar-ridge.wgsl"),
     },
     Hack {
@@ -154,6 +185,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/truchet-weave.wgsl"),
     },
     Hack {
@@ -164,6 +196,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/voronoi-glass.wgsl"),
     },
     Hack {
@@ -174,6 +207,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/apollonian-lace.wgsl"),
     },
     Hack {
@@ -184,6 +218,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/marble-vein.wgsl"),
     },
     Hack {
@@ -194,6 +229,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/flux-grid.wgsl"),
     },
     Hack {
@@ -204,6 +240,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: true,
+        feedback: None,
         source: include_str!("hacks/lava-drift.wgsl"),
     },
     Hack {
@@ -214,6 +251,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: true,
         board: false,
         raymarch: true,
+        feedback: None,
         source: include_str!("hacks/klein-fold.wgsl"),
     },
     Hack {
@@ -224,6 +262,7 @@ pub const HACKS: &[Hack] = &[
         hue_turn: false,
         board: true,
         raymarch: false,
+        feedback: None,
         source: include_str!("hacks/departure-board.wgsl"),
     },
 ];

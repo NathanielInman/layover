@@ -143,15 +143,20 @@ bounding box of every output, so a G9 split into two outputs gets one 32:9
 picture. `t` is seconds since the saver started. The prelude
 (`hacks/prelude.wgsl`) has the uniforms, hashes, noise and 3D SDF primitives;
 a hack with `raymarch: true` also gets `hacks/raymarch.wgsl` (sphere tracing,
-tetrahedron normals, ambient occlusion and soft shadows over its `sdf(p, t)`).
+tetrahedron normals, ambient occlusion and soft shadows over its `sdf(p, t)`),
+and a hack with `feedback: Some(...)` gets `hacks/feedback.wgsl` and ping-pong
+`Rgba16Float` state textures stepped by `step_state(uv, p, t)` with per-hack
+exponential fade (`g.fade = exp(-dt / fade_secs)`).
 
 Each frame:
 
-1. The hack pass draws the whole canvas into one offscreen texture at
+1. Stateful hacks (`feedback`) first step their ping-pong state texture through
+   `step_state`, fading older history on the hack's clock.
+2. The hack pass draws the whole canvas into one offscreen texture at
    `power.render_scale`, with the orbit offset added to every position.
-2. The limiter pass measures the average level on a sparse grid and eases a
+3. The limiter pass measures the average level on a sparse grid and eases a
    gain toward `care.max_average`.
-3. A care pass per output samples that output's part of the texture (using
+4. A care pass per output samples that output's part of the texture (using
    lightweight FXAA when `saver.antialias` is on and the hack is not
    text-heavy) and applies, in order: hue turn (if the hack allows it), drive
    scale, limiter gain, white cap and fade.
@@ -194,8 +199,11 @@ measures:
 | Peak drive | `care.max_drive` |
 
 `cargo test` runs it for every hack against the shipped budget (it needs a
-GPU adapter; CI uses Mesa's lavapipe). `layover wear <hack>` runs it against
-your config and writes a heat map PNG.
+GPU adapter; CI uses Mesa's lavapipe). Stateful hacks run with their
+persistent ping-pong state from a fixed seed so accumulation and fades are
+measured, and a test verifies that an unfaded stateful hack fails the dwell
+budget. `layover wear <hack>` runs it against your config and writes a heat map
+PNG.
 
 ## Config
 

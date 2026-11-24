@@ -372,6 +372,7 @@ impl Saver {
             renderer.set_dim(if self.cheap { feeds::CHEAP_DIM } else { 1.0 });
             renderer.set_antialias(self.cfg.saver.antialias);
             renderer.reset_limiter();
+            renderer.reset_state();
             for hack in &self.hacks {
                 renderer.prepare(hack)?;
             }
