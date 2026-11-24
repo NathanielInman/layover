@@ -116,7 +116,7 @@ HACK_ROWS = [
     ("Silk Flurry", "Silky 3D plasma ribbons and luminous smoke tendrils streaming from orbiting sparks across the dark (after Flurry by Calum Robinson and Tobias Sargeant).", "5.5%", "5s", "9.6%"),
     ("Fluid Beads", "Luminous fluid beads sloshing, colliding and cascading through tilting gravity chambers across the dark (after Fluidballs by Peter Birtles and Jamie Zawinski).", "2.2%", "5s", "3.7%"),
     ("Silver Shoal", "Bioluminescent boid schools and darting swarms weaving, banking and scattering across the dark (after GLSchool by David C. Lambert and Swarm by Jeff Butterworth).", "4.6%", "5s", "7.4%"),
-    ("Wisp Swarm", "Translucent X-ray critter wakes and wind-casting scent seekers weaving glowing trails across the dark (after XRaySwarm by Chris Leger and Anemotaxis by Eugene Balkovsky).", "6.4%", "9s", "12.6%"),
+    ("Wisp Swarm", "Translucent X-ray critter wakes and wind-casting scent seekers weaving glowing trails across the dark (after XRaySwarm by Chris Leger and Anemotaxis by Eugene Balkovsky).", "5.7%", "11s", "12.5%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -482,7 +482,7 @@ WEAR = [
     ("silk-flurry", "5.5%", " 5s", " 9.6%"),
     ("fluid-beads", "2.2%", " 5s", " 3.7%"),
     ("silver-shoal", "4.6%", " 5s", " 7.4%"),
-    ("wisp-swarm", "6.4%", " 9s", "12.6%"),
+    ("wisp-swarm", "5.7%", "11s", "12.5%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):

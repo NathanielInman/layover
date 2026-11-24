@@ -57,6 +57,103 @@ fn smooth_tri(u: f32) -> f32 {
     return clamp(s / (sqrt(1.025) - sqrt(0.025)), 0.0, 1.0);
 }
 
+fn reflect_range(x: f32, lo: f32, hi: f32) -> f32 {
+    let span = max(hi - lo, 1e-4);
+    let u = (x - lo) / span;
+    let m = u - 2.0 * floor(u * 0.5);
+    let f = select(2.0 - m, m, m <= 1.0);
+    return lo + f * span;
+}
+
+fn next_iso_wp(
+    cur: vec2<f32>,
+    prev_ang: f32,
+    step_idx: u32,
+    seed_v: vec2<f32>,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+) -> vec3<f32> {
+    let r = hash22(seed_v + vec2<f32>(f32(step_idx) * 13.7, f32(step_idx) * 29.3));
+    let ang = prev_ang + (r.x - 0.5) * 2.5;
+    let step_d = mix(d_min, d_max, r.y);
+    let cand = cur + vec2<f32>(cos(ang), sin(ang)) * step_d;
+    var nxt = vec2<f32>(reflect_range(cand.x, x_lo, x_hi), reflect_range(cand.y, y_lo, y_hi));
+    if (length(nxt - cur) < d_min * 0.55) {
+        let cx = 0.5 * (x_lo + x_hi);
+        let cy = 0.5 * (y_lo + y_hi);
+        let inward = safe_norm2(
+            vec2<f32>(cx - cur.x, cy - cur.y) + vec2<f32>(cos(ang), sin(ang)) * 0.35,
+            vec2<f32>(1.0, 0.0),
+        );
+        nxt = vec2<f32>(
+            clamp(cur.x + inward.x * step_d, x_lo, x_hi),
+            clamp(cur.y + inward.y * step_d, y_lo, y_hi),
+        );
+    }
+    let dp = nxt - cur;
+    let next_ang = atan2(dp.y, dp.x);
+    return vec3<f32>(nxt, next_ang);
+}
+
+fn catmull_rom2(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, u: f32) -> vec2<f32> {
+    let u2 = u * u;
+    let u3 = u2 * u;
+    return 0.5 * (
+        (2.0 * p1)
+        + (-p0 + p2) * u
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u3
+    );
+}
+
+fn iso_waypoint_pos(
+    p1_init: vec2<f32>,
+    ang_init: f32,
+    seed_v: vec2<f32>,
+    s: f32,
+    speed: f32,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+    max_hops: u32,
+) -> vec2<f32> {
+    var p1 = p1_init;
+    let w1 = next_iso_wp(p1, ang_init, 1u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p2 = w1.xy;
+    let w2 = next_iso_wp(p2, w1.z, 2u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p3 = w2.xy;
+    var cur_ang = w2.z;
+    var p0 = p1 - (p2 - p1);
+    var t_acc = 0.0;
+
+    for (var k = 0u; k < max_hops; k = k + 1u) {
+        let seg_dur = max(length(p2 - p1) / speed, 0.35);
+        if (s <= t_acc + seg_dur || k + 1u == max_hops) {
+            let u = clamp((s - t_acc) / seg_dur, 0.0, 1.0);
+            let pos = catmull_rom2(p0, p1, p2, p3, u);
+            return vec2<f32>(
+                clamp(pos.x, x_lo - 0.05, x_hi + 0.05),
+                clamp(pos.y, y_lo - 0.04, y_hi + 0.04),
+            );
+        }
+        t_acc = t_acc + seg_dur;
+        p0 = p1;
+        p1 = p2;
+        p2 = p3;
+        let w_nxt = next_iso_wp(p2, cur_ang, k + 3u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+        p3 = w_nxt.xy;
+        cur_ang = w_nxt.z;
+    }
+    return p1;
+}
+
 // Four RGB-balanced palettes pairing translucent radiograph hues with warm surge accents.
 fn wisp_palette(pal: u32, slot: u32) -> vec3<f32> {
     let p = pal % 4u;
@@ -108,8 +205,8 @@ fn splat_trail_seg(
         return;
     }
     let mid = 0.5 * (p0 + p1);
-    let edge = smoothstep(0.01 * a, 0.045 * a, mid.x)
-        * (1.0 - smoothstep(0.955 * a, 0.99 * a, mid.x))
+    let edge = smoothstep(0.02, 0.08, mid.x)
+        * (1.0 - smoothstep(a - 0.08, a - 0.02, mid.x))
         * smoothstep(0.02, 0.08, mid.y)
         * (1.0 - smoothstep(0.92, 0.98, mid.y));
     let eff = env * edge;
@@ -160,8 +257,8 @@ fn splat_puff(
     if (env <= 0.003 || (bright <= 0.002 && scent <= 0.002)) {
         return;
     }
-    let edge = smoothstep(0.01 * a, 0.05 * a, world_p.x)
-        * (1.0 - smoothstep(0.95 * a, 0.99 * a, world_p.x))
+    let edge = smoothstep(0.02, 0.08, world_p.x)
+        * (1.0 - smoothstep(a - 0.08, a - 0.02, world_p.x))
         * smoothstep(0.02, 0.09, world_p.y)
         * (1.0 - smoothstep(0.91, 0.98, world_p.y));
     let eff = env * edge;
@@ -182,28 +279,49 @@ fn xray_roam_target(arch: u32, swarm_id: u32, gen: u32, phase: f32, a: f32) -> v
     let fs = f32(swarm_id);
     let fg = f32(gen);
     let h = hash22(vec2<f32>(fs * 17.3 + fg * 31.7, g.seed * 61.0 + 3.1));
+    let seed_v = vec2<f32>(fs * 31.7 + fg * 19.3, g.seed * 97.0 + f32(arch) * 7.1);
+    let s = max(phase + 1.5, 0.0);
+    let n_swarms = select(5u, 3u, a < 2.4);
 
     if (arch == 0u) {
-        // Long sweeping full-monitor chases: steady smooth horizontal glide + flowing vertical arcs.
-        let fx = 0.092 + 0.022 * hash11(fs * 23.1 + fg * 13.7 + g.seed * 41.0);
-        let fy = 0.145 + 0.038 * hash11(fs * 37.9 + fg * 19.3 + g.seed * 59.0);
-        let ux = smooth_tri(phase * fx + h.x + fs * 0.21);
-        let uy = smooth_tri(phase * fy + h.y + fs * 0.37);
-        let x = mix(0.06 * a, 0.94 * a, ux) + 0.045 * a * sin(phase * 0.65 + h.y * TAU);
-        let y = mix(0.11, 0.89, uy) + 0.06 * cos(phase * 0.85 + h.x * TAU);
-        let z = 0.22 * sin(phase * (0.78 + 0.14 * fs) + h.x * TAU);
-        return vec3<f32>(clamp(x, 0.05 * a, 0.95 * a), clamp(y, 0.08, 0.92), z);
+        // Equal-speed isotropic Catmull-Rom roaming across the open 32:9 canvas.
+        let x_lo = 0.16;
+        let x_hi = max(a - 0.16, 0.32);
+        let y_lo = 0.13;
+        let y_hi = 0.87;
+        let p1 = vec2<f32>(
+            mix(x_lo, x_hi, fract((fs + 0.5) / f32(n_swarms) + (h.x - 0.5) * 0.14)),
+            mix(y_lo, y_hi, h.y),
+        );
+        let xy = iso_waypoint_pos(
+            p1, h.x * TAU, seed_v, s, 0.46,
+            x_lo, x_hi, y_lo, y_hi,
+            0.44, 0.78, 64u,
+        );
+        let z = 0.22 * sin(s * (0.72 + 0.12 * fs) + h.x * TAU);
+        return vec3<f32>(xy, z);
     }
 
-    // arch == 2u: Broad figure-8 / orbital ribbon sweeps traversing the entire canvas cleanly.
+    // arch == 2u: Broad 1:1 circular orbital ribbons gliding evenly across the room.
     let dir = select(-1.0, 1.0, (swarm_id % 2u) == 0u);
-    let ux = smooth_tri(phase * (0.075 + 0.015 * fs) + h.y + fs * 0.19);
-    let w = phase * (0.62 + 0.08 * fs) * dir + h.x * TAU;
-    let cx = mix(0.22 * a, 0.78 * a, ux);
-    let x = cx + 0.18 * a * cos(w);
-    let y = 0.50 + 0.36 * sin(w * 1.25 + h.y * TAU);
-    let z = 0.24 * cos(w * 1.15 - fs * 0.9);
-    return vec3<f32>(clamp(x, 0.05 * a, 0.95 * a), clamp(y, 0.08, 0.92), z);
+    let x_lo = 0.34;
+    let x_hi = max(a - 0.34, 0.40);
+    let y_lo = 0.32;
+    let y_hi = 0.68;
+    let p1 = vec2<f32>(
+        mix(x_lo, x_hi, fract((fs + 0.5) / f32(n_swarms) + (h.y - 0.5) * 0.14)),
+        mix(y_lo, y_hi, h.x),
+    );
+    let c = iso_waypoint_pos(
+        p1, h.y * TAU, seed_v, s, 0.24,
+        x_lo, x_hi, y_lo, y_hi,
+        0.34, 0.62, 48u,
+    );
+    let w = s * (1.10 + 0.14 * fs) * dir + h.x * TAU;
+    let r_orb = 0.22;
+    let pos = c + vec2<f32>(cos(w), sin(w)) * r_orb;
+    let z = 0.22 * cos(w * 1.15 - fs * 0.9);
+    return vec3<f32>(clamp(pos.x, 0.06, a - 0.06), clamp(pos.y, 0.08, 0.92), z);
 }
 
 // --- Full-Canvas Anemotaxis beacons and wind fields (arch == 1 and arch == 3) ---
@@ -218,29 +336,33 @@ fn anemo_beacon(arch: u32, beacon_id: u32, gen: u32, phase: f32, a: f32) -> vec2
     let h = hash22(vec2<f32>(fg * 29.3 + f32(beacon_id) * 19.7, g.seed * 71.0 + 1.9));
 
     if (arch == 1u) {
-        // Wide-roaming upwind scent emitter sweeping continuously with orbital motion at turns.
+        // Wide-roaming upwind scent emitter sweeping continuously with 1:1 circular orbit at turns.
         let sgn = anemo_wind_sign(gen);
-        let ux = smooth_tri(phase * 0.088 + h.x);
-        let uy = smooth_tri(phase * 0.132 + h.y);
         let x_min = select(0.10 * a, 0.66 * a, sgn < 0.0);
         let x_max = select(0.34 * a, 0.90 * a, sgn < 0.0);
-        let orb_x = 0.035 * a * cos(phase * 0.95 + h.x * TAU);
-        let orb_y = 0.065 * sin(phase * 0.95 + h.x * TAU);
+        let fx = 0.16 / (2.0 * max(x_max - x_min, 0.30));
+        let fy = 0.16 / (2.0 * 0.66);
+        let ux = smooth_tri(phase * fx + h.x);
+        let uy = smooth_tri(phase * fy + h.y);
+        let orb_x = 0.055 * cos(phase * 0.95 + h.x * TAU);
+        let orb_y = 0.055 * sin(phase * 0.95 + h.x * TAU);
         return vec2<f32>(
-            clamp(mix(x_min, x_max, ux) + orb_x, 0.06 * a, 0.94 * a),
+            clamp(mix(x_min, x_max, ux) + orb_x, 0.06, a - 0.06),
             clamp(mix(0.17, 0.83, uy) + orb_y, 0.11, 0.89),
         );
     }
 
     // arch == 3u: Two open-canvas beacons gliding smoothly across opposite halves of the monitor.
     let fb = f32(beacon_id);
-    let ux = smooth_tri(phase * 0.078 + h.x * 0.5 + fb * 0.5);
-    let uy = smooth_tri(phase * 0.118 + h.y + fb * 0.35);
     let x_lo = select(0.55 * a, 0.09 * a, beacon_id == 0u);
     let x_hi = select(0.91 * a, 0.45 * a, beacon_id == 0u);
+    let fx = 0.16 / (2.0 * max(x_hi - x_lo, 0.30));
+    let fy = 0.16 / (2.0 * 0.66);
+    let ux = smooth_tri(phase * fx + h.x * 0.5 + fb * 0.5);
+    let uy = smooth_tri(phase * fy + h.y + fb * 0.35);
     return vec2<f32>(
-        clamp(mix(x_lo, x_hi, ux) + 0.05 * a * cos(phase * 0.82 + fb * PI), 0.06 * a, 0.94 * a),
-        clamp(mix(0.17, 0.83, uy) + 0.065 * sin(phase * 0.82 + fb * PI), 0.11, 0.89),
+        clamp(mix(x_lo, x_hi, ux) + 0.055 * cos(phase * 0.82 + fb * PI), 0.06, a - 0.06),
+        clamp(mix(0.17, 0.83, uy) + 0.055 * sin(phase * 0.82 + fb * PI), 0.11, 0.89),
     );
 }
 
@@ -260,7 +382,7 @@ fn anemo_wind(arch: u32, p: vec2<f32>, gen: u32, phase: f32, a: f32) -> vec2<f32
     }
 
     // arch == 3u: Screen-wide S-bend double-eddy airflow connecting the full canvas.
-    let nx = (p.x / max(a, 1e-4)) * TAU;
+    let nx = p.x * 2.2;
     let ny = (p.y - 0.5) * PI;
     let vx = (0.38 * cos(ny) + 0.25 * sin(nx * 1.0 + phase * 0.48 + ph)) * sx;
     let vy = 0.30 * sin(nx * 1.5 - phase * 0.65 + ph) + 0.15 * cos(nx * 2.5 + ny + phase * 0.85);
@@ -294,17 +416,17 @@ fn spawn_particle(
         let sub_id = local_id / n_swarms;
         let sub_count = max(n_active / n_swarms, 1u);
         let rank_u = (f32(sub_id) + 0.5) / f32(sub_count);
-        let tgt = xray_roam_target(arch, swarm_id, gen, phase - rank_u * 0.36, a);
+        let tgt = xray_roam_target(arch, swarm_id, gen, phase - rank_u * 0.44, a);
 
         let a_ring = rank_u * TAU * 2.0 + h0.x * 0.3;
         let r_ring = 0.025 + 0.075 * rank_u;
         let p_xy = vec2<f32>(
-            clamp(tgt.x + cos(a_ring) * r_ring, 0.04 * a, 0.96 * a),
+            clamp(tgt.x + cos(a_ring) * r_ring, 0.04, a - 0.04),
             clamp(tgt.y + sin(a_ring) * r_ring * 0.8, 0.06, 0.94),
         );
         let p_z = tgt.z + 0.06 * (h1.y - 0.5);
 
-        let ahead = xray_roam_target(arch, swarm_id, gen, phase - rank_u * 0.36 + 0.14, a);
+        let ahead = xray_roam_target(arch, swarm_id, gen, phase - rank_u * 0.44 + 0.14, a);
         let v3 = safe_norm3(ahead - tgt, vec3<f32>(1.0, 0.0, 0.0)) * (0.70 + 0.35 * h1.x);
         let col = wisp_palette(pal_id, swarm_id);
 
@@ -428,7 +550,7 @@ fn step_particle(idx: u32, t: f32) {
         let vel3 = vec3<f32>(st.v.xy, st.p.w);
 
         // Coherent ordered phase lag + gentle ribbon spread forms glowing X-ray sheets without hairballs.
-        let lag = rank_u * 0.34 + (j_crit.x - 0.5) * 0.07;
+        let lag = rank_u * 0.44 + (j_crit.x - 0.5) * 0.07;
         let tgt = xray_roam_target(arch, swarm_id, gen, phase - lag, a);
         let tgt_ahead = xray_roam_target(arch, swarm_id, gen, phase - lag + 0.12, a);
         let flow = safe_norm3(tgt_ahead - tgt, vec3<f32>(1.0, 0.0, 0.0));
@@ -440,7 +562,7 @@ fn step_particle(idx: u32, t: f32) {
         let ribbon_tgt = tgt + side * (cos(fan_ang) * fan_w) + binorm * (sin(fan_ang) * fan_w * 0.72);
 
         let to_tgt = ribbon_tgt - pos3;
-        let k_spring = mix(4.6, 6.8, j_crit.x);
+        let k_spring = mix(3.6, 5.4, j_crit.x);
         let curl = vec3<f32>(
             sin(pos3.y * 6.5 + phase * 1.4 + rank_u * 3.0),
             cos(pos3.x * 4.5 - phase * 1.2 - rank_u * 2.5),
@@ -448,11 +570,11 @@ fn step_particle(idx: u32, t: f32) {
         ) * 0.16;
         let acc = to_tgt * k_spring + curl;
 
-        let drag_k = mix(1.10, 1.40, j_crit.y);
+        let drag_k = mix(1.30, 1.70, j_crit.y);
         var v_new = vel3 * exp(-drag_k * dt) + acc * dt;
         let spd = length(v_new);
-        let v_min = 0.52;
-        let v_max = select(1.62, 1.75, arch == 2u);
+        let v_min = 0.28;
+        let v_max = select(1.05, 1.12, arch == 2u);
         if (spd < v_min) {
             v_new = safe_norm3(v_new, flow) * v_min;
         } else if (spd > v_max) {
@@ -460,8 +582,8 @@ fn step_particle(idx: u32, t: f32) {
         }
 
         var p_new = pos3 + v_new * dt;
-        if (p_new.x < 0.025 * a || p_new.x > 0.975 * a) {
-            p_new.x = clamp(p_new.x, 0.025 * a, 0.975 * a);
+        if (p_new.x < 0.04 || p_new.x > a - 0.04) {
+            p_new.x = clamp(p_new.x, 0.04, a - 0.04);
             v_new.x = -v_new.x * 0.72;
         }
         if (p_new.y < 0.04 || p_new.y > 0.96) {
@@ -485,7 +607,7 @@ fn step_particle(idx: u32, t: f32) {
         particles[idx] = next_st;
 
         let depth_l = clamp(1.06 - p_new.z * 0.55, 0.46, 1.32);
-        let vel_sheen = smoothstep(0.55, 1.55, length(v_new));
+        let vel_sheen = smoothstep(0.32, 0.92, length(v_new));
         let strand_col = mix(st.c.rgb, vec3<f32>(0.94, 0.98, 1.00), 0.14 + 0.34 * vel_sheen);
         let width_w = mix(0.0038, 0.0056, vel_sheen);
         let bright = (0.24 + 0.22 * vel_sheen) * depth_l;
