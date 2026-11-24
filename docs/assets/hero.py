@@ -42,10 +42,10 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil, Star Shell, Tidal Spiral, Silk Flurry, Fluid Beads, Silver Shoal and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil, Star Shell, Tidal Spiral, Silk Flurry, Fluid Beads, Silver Shoal, Wisp Swarm and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the thirty-one hacks with the same wear numbers, each passing and "
+    "to start the saver or hold; the Hacks tab lists the thirty-two hacks with the same wear numbers, each passing and "
     "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
@@ -116,6 +116,7 @@ HACK_ROWS = [
     ("Silk Flurry", "Silky 3D plasma ribbons and luminous smoke tendrils streaming from orbiting sparks across the dark (after Flurry by Calum Robinson and Tobias Sargeant).", "5.5%", "5s", "9.6%"),
     ("Fluid Beads", "Luminous fluid beads sloshing, colliding and cascading through tilting gravity chambers across the dark (after Fluidballs by Peter Birtles and Jamie Zawinski).", "2.2%", "5s", "3.7%"),
     ("Silver Shoal", "Bioluminescent boid schools and darting swarms weaving, banking and scattering across the dark (after GLSchool by David C. Lambert and Swarm by Jeff Butterworth).", "4.6%", "5s", "7.4%"),
+    ("Wisp Swarm", "Translucent X-ray critter wakes and wind-casting scent seekers weaving glowing trails across the dark (after XRaySwarm by Chris Leger and Anemotaxis by Eugene Balkovsky).", "6.4%", "9s", "12.6%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -481,13 +482,14 @@ WEAR = [
     ("silk-flurry", "5.5%", " 5s", " 9.6%"),
     ("fluid-beads", "2.2%", " 5s", " 3.7%"),
     ("silver-shoal", "4.6%", " 5s", " 7.4%"),
+    ("wisp-swarm", "6.4%", " 9s", "12.6%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
-    y = ty + 18 + i * 13.3
+    y = ty + 18 + i * 12.8
     add(tx(TL, y, f"{hack:<16} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
     add(tx(TL + 57 * 7.5, y, "passes", 12.5, GO, 700))
-by = ty + 18 + len(WEAR) * 13.3 + 4
+by = ty + 18 + len(WEAR) * 12.8 + 4
 term(by, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
 term(by + 25, "$ layover hold 1h", FROST, [(HOLD, RESET)])
 term(by + 44, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
