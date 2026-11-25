@@ -468,11 +468,11 @@ pub const HACKS: &[Hack] = &[
         board: false,
         raymarch: false,
         feedback: Some(Feedback {
-            fade_secs: 0.13,
+            fade_secs: 0.34,
             step_hz: 30.0,
             max_steps: 4,
             max_height: Some(540),
-            wrap: true,
+            wrap: false,
         }),
         particles: Some(Particles { count: 12288 }),
         lines: None,

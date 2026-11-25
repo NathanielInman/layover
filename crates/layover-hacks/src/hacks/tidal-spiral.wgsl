@@ -1,24 +1,24 @@
 // Tidal Spiral: colliding 3D spiral galaxies pulling luminous tidal bridges,
-// warped discs and orbital gravitational slingshot streams across the dark
-// on Tier P compute particles and advected Tier S feedback textures.
+// warped discs and orbital gravitational slingshot streams across the full
+// open canvas on Tier P compute particles and stationary Tier S feedback
+// textures.
 // After xscreensaver's Galaxy (Uli Siegmund, Harald Backert, Hubert Feyrer,
 // Jamie Zawinski) and Grav (Greg Bowering).
 //
 // Particle buffer layout (`particles[idx]`):
-//   p.xyz = 3D position relative to its system's center of mass (canvas heights)
+//   p.xyz = 3D position relative to its pair's barycenter (canvas heights)
 //   p.w   = intrinsic star luminosity multiplier (negative flag encodes supergiant/H-II glow)
-//   v.xyz = 3D velocity relative to its system's center of mass (canvas heights/sec)
+//   v.xyz = 3D velocity relative to its pair's barycenter (canvas heights/sec)
 //   v.w   = baseline orbital speed (for pericenter / slingshot brightening)
 //   c.rgb = spectral base RGB color
 //   c.w   = packed integer `(gen % 16777215u) + 1u` stored exact in f32 (0 = uninit)
 
-const DRIFT_VX: f32 = 0.112;
-const EPOCH_SECS: f32 = 36.0;
+const EPOCH_SECS: f32 = 34.0;
 const GAL_G: f32 = 0.0025;
 const GRAV_G: f32 = 0.00145;
-const W_TRAIL: f32 = 0.00072;
-const W_STAR: f32 = 0.0027;
-const GRAV_TRACERS: u32 = 140u;
+const W_TRAIL: f32 = 0.00088;
+const W_STAR: f32 = 0.0032;
+const GRAV_TRACERS_PER_PAIR: u32 = 180u;
 
 struct Core {
     pos: vec3<f32>,
@@ -56,6 +56,118 @@ fn disc_to_world(v: vec3<f32>, tilt_x: f32, tilt_y: f32) -> vec3<f32> {
     let v1 = vec3<f32>(v.x, yz.x, yz.y);
     let xz = rot2(tilt_y) * v1.xz;
     return vec3<f32>(xz.x, v1.y, xz.y);
+}
+
+fn safe_norm2(v: vec2<f32>, fallback: vec2<f32>) -> vec2<f32> {
+    let l2 = dot(v, v);
+    if (l2 > 1e-10) {
+        return v * inverseSqrt(l2);
+    }
+    return fallback;
+}
+
+fn reflect_range(x: f32, lo: f32, hi: f32) -> f32 {
+    let span = max(hi - lo, 1e-4);
+    let u = (x - lo) / span;
+    let m = u - 2.0 * floor(u * 0.5);
+    let f = select(2.0 - m, m, m <= 1.0);
+    return lo + f * span;
+}
+
+fn next_iso_wp(
+    cur: vec2<f32>,
+    prev_ang: f32,
+    step_idx: u32,
+    seed_v: vec2<f32>,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+) -> vec3<f32> {
+    let r = hash22(seed_v + vec2<f32>(f32(step_idx) * 13.7, f32(step_idx) * 29.3));
+    let ang = prev_ang + (r.x - 0.5) * 2.5;
+    let step_d = mix(d_min, d_max, r.y);
+    let cand = cur + vec2<f32>(cos(ang), sin(ang)) * step_d;
+    var nxt = vec2<f32>(reflect_range(cand.x, x_lo, x_hi), reflect_range(cand.y, y_lo, y_hi));
+    if (length(nxt - cur) < d_min * 0.55) {
+        let cx = 0.5 * (x_lo + x_hi);
+        let cy = 0.5 * (y_lo + y_hi);
+        let inward = safe_norm2(
+            vec2<f32>(cx - cur.x, cy - cur.y) + vec2<f32>(cos(ang), sin(ang)) * 0.35,
+            vec2<f32>(1.0, 0.0),
+        );
+        nxt = vec2<f32>(
+            clamp(cur.x + inward.x * step_d, x_lo, x_hi),
+            clamp(cur.y + inward.y * step_d, y_lo, y_hi),
+        );
+    }
+    let dp = nxt - cur;
+    let next_ang = atan2(dp.y, dp.x);
+    return vec3<f32>(nxt, next_ang);
+}
+
+fn catmull_rom2(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, u: f32) -> vec2<f32> {
+    let u2 = u * u;
+    let u3 = u2 * u;
+    return 0.5 * (
+        (2.0 * p1)
+        + (-p0 + p2) * u
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u3
+    );
+}
+
+fn iso_waypoint_pos(
+    p1_init: vec2<f32>,
+    ang_init: f32,
+    seed_v: vec2<f32>,
+    s: f32,
+    speed: f32,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+    max_hops: u32,
+) -> vec2<f32> {
+    var p1 = p1_init;
+    let w1 = next_iso_wp(p1, ang_init, 1u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p2 = w1.xy;
+    let w2 = next_iso_wp(p2, w1.z, 2u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p3 = w2.xy;
+    var cur_ang = w2.z;
+    var p0 = p1 - (p2 - p1);
+    var t_acc = 0.0;
+
+    for (var k = 0u; k < max_hops; k = k + 1u) {
+        let seg_dur = max(length(p2 - p1) / speed, 0.35);
+        if (s <= t_acc + seg_dur || k + 1u == max_hops) {
+            let u = clamp((s - t_acc) / seg_dur, 0.0, 1.0);
+            let pos = catmull_rom2(p0, p1, p2, p3, u);
+            return vec2<f32>(
+                clamp(pos.x, x_lo - 0.05, x_hi + 0.05),
+                clamp(pos.y, y_lo - 0.04, y_hi + 0.04),
+            );
+        }
+        t_acc = t_acc + seg_dur;
+        p0 = p1;
+        p1 = p2;
+        p2 = p3;
+        let w_nxt = next_iso_wp(p2, cur_ang, k + 3u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+        p3 = w_nxt.xy;
+        cur_ang = w_nxt.z;
+    }
+    return p1;
+}
+
+fn bezel_fade(p: vec2<f32>, a: f32) -> f32 {
+    return smoothstep(0.02, 0.08, p.x)
+        * (1.0 - smoothstep(a - 0.08, a - 0.02, p.x))
+        * smoothstep(0.02, 0.08, p.y)
+        * (1.0 - smoothstep(0.92, 0.98, p.y));
 }
 
 // Curated astronomical palettes: warm galactic bulge, saturated blue-cyan young
@@ -114,30 +226,59 @@ fn star_palette(pal: u32, role: u32) -> vec3<f32> {
     return vec3<f32>(0.28, 0.38, 0.96);
 }
 
-fn system_camera_angles(sys_id: u32, gen: u32, t_epoch: f32) -> vec3<f32> {
-    let fs = f32(sys_id);
+fn system_camera_angles(pair_id: u32, gen: u32, t_epoch: f32) -> vec3<f32> {
+    let fs = f32(pair_id);
     let fg = f32(gen);
     let h = hash22(vec2<f32>(fs * 17.7 + fg * 31.3, g.seed * 67.0 + 5.1));
     let yaw = 0.22 * sin(t_epoch * 0.045 + fs * 2.1 + h.y * TAU);
-    let pitch = (0.42 + 0.34 * h.y) * select(-1.0, 1.0, (sys_id + gen) % 2u == 0u);
-    let roll = h.x * TAU + t_epoch * (0.024 + 0.010 * f32(sys_id % 2u));
+    let pitch = (0.42 + 0.34 * h.y) * select(-1.0, 1.0, (pair_id + gen) % 2u == 0u);
+    let roll = h.x * TAU + t_epoch * (0.024 + 0.010 * f32(pair_id % 2u));
     return vec3<f32>(yaw, pitch, roll);
 }
 
-fn project_star(p3: vec3<f32>, sys_id: u32, gen: u32, t_epoch: f32) -> vec3<f32> {
-    let cam = system_camera_angles(sys_id, gen, t_epoch);
+fn project_star(p3: vec3<f32>, pair_id: u32, gen: u32, t_epoch: f32) -> vec3<f32> {
+    let cam = system_camera_angles(pair_id, gen, t_epoch);
     let pr = rotate_3d(p3, cam.x, cam.y, cam.z);
     let persp = 1.0 / (1.0 + clamp(pr.z, -0.70, 1.60) * 0.28);
     return vec3<f32>(pr.xy * persp, pr.z);
 }
 
+fn pair_center(pair_id: u32, n_pairs: u32, gen: u32, phase: f32, a: f32) -> vec2<f32> {
+    let x_lo = 0.28;
+    let x_hi = max(a - 0.28, 0.56);
+    let y_lo = 0.24;
+    let y_hi = 0.76;
+    let fp = f32(pair_id);
+    let fg = f32(gen);
+    let h = hash22(vec2<f32>(fp * 23.1 + fg * 47.3, g.seed * 71.0 + 3.7));
+    let seed_v = vec2<f32>(fp * 37.9 + fg * 19.3, g.seed * 89.0 + 5.1);
+    let p1 = vec2<f32>(
+        mix(x_lo, x_hi, fract((fp + 0.5) / f32(n_pairs) + (h.x - 0.5) * 0.22)),
+        mix(y_lo, y_hi, h.y),
+    );
+    return iso_waypoint_pos(
+        p1,
+        h.x * TAU,
+        seed_v,
+        max(phase, 0.0),
+        0.14,
+        x_lo,
+        x_hi,
+        y_lo,
+        y_hi,
+        0.36,
+        0.68,
+        32u,
+    );
+}
+
 fn eval_core_positions(
     arch: u32,
-    sys_id: u32,
+    pair_id: u32,
     gen: u32,
     phase: f32,
 ) -> array<vec3<f32>, 3> {
-    let fs = f32(sys_id);
+    let fs = f32(pair_id);
     let fg = f32(gen);
     let h0 = hash22(vec2<f32>(fs * 19.3 + fg * 43.1, g.seed * 79.0 + 2.3));
     let h1 = hash22(vec2<f32>(fs * 37.1 + fg * 11.7, g.seed * 53.0 + 8.9));
@@ -173,11 +314,11 @@ fn eval_core_positions(
     }
 
     if (arch == 2u) {
-        // Grav Slingshot (after grav.c): heavy central sun + orbiting companion + outer binary shepherd.
+        // Grav Slingshot (after grav.c): heavy central sun with reflex motion + companion + outer shepherd.
         let ang = phase * 0.24 + h1.y * TAU;
-        let c0 = vec3<f32>(-0.022 * cos(ang), -0.022 * sin(ang), 0.0);
-        let c1 = vec3<f32>(0.175 * cos(ang), 0.175 * sin(ang), 0.025 * sin(ang * 2.0));
-        let c2 = vec3<f32>(-0.255 * cos(ang * 0.52 + 1.2), -0.225 * sin(ang * 0.52 + 1.2), 0.03 * cos(ang));
+        let c0 = vec3<f32>(-0.055 * cos(ang), -0.055 * sin(ang), 0.012 * sin(ang));
+        let c1 = vec3<f32>(0.185 * cos(ang), 0.185 * sin(ang), 0.025 * sin(ang * 2.0));
+        let c2 = vec3<f32>(-0.265 * cos(ang * 0.52 + 1.2), -0.235 * sin(ang * 0.52 + 1.2), 0.03 * cos(ang));
         return array<vec3<f32>, 3>(
             rotate_3d(c0, yaw * 0.4, pitch * 0.4, roll),
             rotate_3d(c1, yaw * 0.4, pitch * 0.4, roll),
@@ -195,16 +336,16 @@ fn eval_core_positions(
     return array<vec3<f32>, 3>(-rel * (m1 * inv_m), rel * (m0 * inv_m), vec3<f32>(0.0));
 }
 
-fn eval_cores(arch: u32, sys_id: u32, gen: u32, phase: f32) -> CoreSet {
-    let fs = f32(sys_id);
+fn eval_cores(arch: u32, pair_id: u32, gen: u32, phase: f32) -> CoreSet {
+    let fs = f32(pair_id);
     let fg = f32(gen);
     let h = hash22(vec2<f32>(fs * 23.9 + fg * 59.3, g.seed * 89.0 + 3.7));
     let h2 = hash22(vec2<f32>(fs * 41.3 + fg * 13.9, g.seed * 61.0 + 9.1));
 
     let eps = 0.02;
-    let p_cur = eval_core_positions(arch, sys_id, gen, phase);
-    let p_m = eval_core_positions(arch, sys_id, gen, phase - eps);
-    let p_p = eval_core_positions(arch, sys_id, gen, phase + eps);
+    let p_cur = eval_core_positions(arch, pair_id, gen, phase);
+    let p_m = eval_core_positions(arch, pair_id, gen, phase - eps);
+    let p_p = eval_core_positions(arch, pair_id, gen, phase + eps);
     let inv_2eps = 0.5 / eps;
 
     var cs: CoreSet;
@@ -212,6 +353,7 @@ fn eval_cores(arch: u32, sys_id: u32, gen: u32, phase: f32) -> CoreSet {
 
     let spin0 = select(-1.0, 1.0, h.x > 0.35);
     let spin1 = select(-1.0, 1.0, h.y > 0.5);
+    let sec_pal = f32(1u + (pair_id % 2u));
 
     if (arch == 0u) {
         cs.c0 = Core(
@@ -222,7 +364,7 @@ fn eval_cores(arch: u32, sys_id: u32, gen: u32, phase: f32) -> CoreSet {
         cs.c1 = Core(
             p_cur[1], (p_p[1] - p_m[1]) * inv_2eps,
             0.70, 0.074, 0.22,
-            (h2.x - 0.5) * 0.55, (h2.y - 0.5) * 0.55, spin1, 2.0, 1.0,
+            (h2.x - 0.5) * 0.55, (h2.y - 0.5) * 0.55, spin1, 2.0, sec_pal,
         );
         cs.c2 = cs.c0;
     } else if (arch == 1u) {
@@ -234,7 +376,7 @@ fn eval_cores(arch: u32, sys_id: u32, gen: u32, phase: f32) -> CoreSet {
         cs.c1 = Core(
             p_cur[1], (p_p[1] - p_m[1]) * inv_2eps,
             0.62, 0.072, 0.20,
-            (h2.x - 0.5) * 0.62, (h2.y - 0.5) * 0.62, -spin0, 2.0, 1.0,
+            (h2.x - 0.5) * 0.62, (h2.y - 0.5) * 0.62, -spin0, 2.0, sec_pal,
         );
         cs.c2 = cs.c0;
     } else if (arch == 2u) {
@@ -246,7 +388,7 @@ fn eval_cores(arch: u32, sys_id: u32, gen: u32, phase: f32) -> CoreSet {
         cs.c1 = Core(
             p_cur[1], (p_p[1] - p_m[1]) * inv_2eps,
             0.34, 0.042, 0.09,
-            0.1, -0.1, 1.0, 2.0, 1.0,
+            0.1, -0.1, 1.0, 2.0, sec_pal,
         );
         cs.c2 = Core(
             p_cur[2], (p_p[2] - p_m[2]) * inv_2eps,
@@ -262,7 +404,7 @@ fn eval_cores(arch: u32, sys_id: u32, gen: u32, phase: f32) -> CoreSet {
         cs.c1 = Core(
             p_cur[1], (p_p[1] - p_m[1]) * inv_2eps,
             0.46, 0.084, 0.14,
-            (h2.x - 0.5) * 0.52, (h2.y - 0.5) * 0.52, spin1, 2.0, 1.0,
+            (h2.x - 0.5) * 0.52, (h2.y - 0.5) * 0.52, spin1, 2.0, sec_pal,
         );
         cs.c2 = cs.c0;
     }
@@ -299,26 +441,16 @@ fn grav_accel(arch: u32, pos: vec3<f32>, cores: CoreSet) -> vec3<f32> {
     return acc;
 }
 
-fn system_center(sys_id: u32, n_sys: u32, gen: u32, t: f32) -> vec2<f32> {
-    let a = aspect();
-    let fs = f32(sys_id);
-    let fg = f32(gen);
-    let jx = (hash11(fs * 17.3 + fg * 29.7 + g.seed * 53.0) - 0.5) * 0.34;
-    let x0 = fract((fs + 0.5 + jx) / f32(n_sys) + g.seed * 0.37) * a;
-    let y0 = 0.22 + 0.56 * fract(0.17 + fs * 0.37 + fg * 0.618034 + g.seed * 0.53);
-    return vec2<f32>(fract((x0 + DRIFT_VX * t) / a) * a, y0);
-}
-
 fn spawn_star(
     arch: u32,
     pal_id: u32,
     cores: CoreSet,
-    sys_id: u32,
+    pair_id: u32,
     local_id: u32,
     gen: u32,
 ) -> Particle {
     let fl = f32(local_id);
-    let fs = f32(sys_id);
+    let fs = f32(pair_id);
     let fg = f32(gen);
     let s0 = vec2<f32>(fl * 1.13 + fs * 17.3, fg * 31.7 + g.seed * 73.0);
     let s1 = vec2<f32>(fl * 2.71 + fg * 19.1, fs * 43.9 + g.seed * 59.0);
@@ -435,7 +567,8 @@ fn spawn_star(
 }
 
 fn splat_star_step(
-    sys_cm: vec2<f32>,
+    cm_prev: vec2<f32>,
+    cm_cur: vec2<f32>,
     p_prev3: vec3<f32>,
     p_cur3: vec3<f32>,
     col: vec3<f32>,
@@ -443,101 +576,127 @@ fn splat_star_step(
     speed: f32,
     v_base: f32,
     env: f32,
-    sys_id: u32,
+    pair_id: u32,
     gen: u32,
     t_epoch: f32,
+    a: f32,
     n_sub: i32,
     norm_count: f32,
+    dt_rgb: f32,
+    dt_core: f32,
     is_grav: bool,
     draw_head: bool,
 ) {
     let is_beacon = lum_raw < 0.0;
     let lum = abs(lum_raw);
-    let pr0 = project_star(p_prev3, sys_id, gen, t_epoch);
-    let pr1 = project_star(p_cur3, sys_id, gen, t_epoch);
-    let q0 = pr0.xy;
-    let q1 = pr1.xy;
-    let wy = sys_cm.y + q1.y;
-    let y_clip = smoothstep(0.02, 0.07, wy) * (1.0 - smoothstep(0.93, 0.98, wy));
-    let r_fade = 1.0 - smoothstep(0.45, 0.76, length(p_cur3));
+    let pr0 = project_star(p_prev3, pair_id, gen, t_epoch);
+    let pr1 = project_star(p_cur3, pair_id, gen, t_epoch);
+    let wp0 = cm_prev + pr0.xy;
+    let wp1 = cm_cur + pr1.xy;
+    if (wp1.x < 0.0 || wp1.x > a || wp1.y < 0.0 || wp1.y > 1.0) {
+        return;
+    }
+    let edge = bezel_fade(wp1, a);
+    if (edge <= 0.002) {
+        return;
+    }
+
+    let r_fade = 1.0 - smoothstep(0.65, 1.20, length(p_cur3));
     let depth_fade = clamp(0.84 - pr1.z * 0.24, 0.40, 1.15);
     let boost = clamp(speed / max(v_base, 0.03), 0.80, 1.85);
-    let eff_lum = lum * r_fade * depth_fade * boost * env * norm_count * y_clip;
+    let eff_lum = lum * r_fade * depth_fade * boost * env * norm_count * edge;
     if (eff_lum <= 0.005) {
         return;
     }
 
     let h = f32(splat_dims().y);
-    let dt_fade = max(1.0 - g.fade, 0.01);
 
     if (is_grav) {
-        let px_len = length((q1 - q0) * h);
-        let seg_e = max(px_len, dt_fade / f32(n_sub)) * (W_TRAIL * h) * eff_lum;
-        let delta_world = length(q1 - q0);
+        let px_len = length((wp1 - wp0) * h);
+        let seg_rgb = max(px_len, dt_rgb / f32(n_sub)) * (W_TRAIL * h) * eff_lum;
+        let seg_core = max(px_len, dt_core / f32(n_sub)) * (W_TRAIL * h) * eff_lum;
+        let delta_world = length(wp1 - wp0);
         if (delta_world > 1e-5 && delta_world <= 0.25) {
-            splat_segment(sys_cm + q0, sys_cm + q1, col * seg_e, seg_e * 0.16, true);
+            splat_segment(wp0, wp1, col * seg_rgb, seg_core * 0.16, false);
         } else {
-            splat_point_wrap(sys_cm + q1, col * seg_e, seg_e * 0.16);
+            splat_point(wp1, col * seg_rgb, seg_core * 0.16);
         }
         if (draw_head) {
-            let head_e = (W_STAR * h) * (W_STAR * h) * dt_fade * 22.0 * eff_lum;
-            splat_point_wrap(sys_cm + q1, col * (head_e * 0.65), head_e * 1.45);
+            let head_rgb = (W_STAR * h) * (W_STAR * h) * dt_rgb * 22.0 * eff_lum;
+            let head_core = (W_STAR * h) * (W_STAR * h) * dt_core * 22.0 * eff_lum;
+            splat_point(wp1, col * (head_rgb * 0.65), head_core * 1.45);
         }
         return;
     }
 
-    let pt_e = (W_STAR * h) * (W_STAR * h) * (dt_fade / f32(n_sub)) * 12.4 * eff_lum;
+    let inv_sub = 1.0 / f32(n_sub);
+    let star_area = (W_STAR * h) * (W_STAR * h) * inv_sub * 12.4 * eff_lum;
+    let rgb_e = star_area * dt_rgb;
+    let core_e = star_area * dt_core;
     if (is_beacon && draw_head) {
-        splat_disc(sys_cm + q1, 0.0026, col * (pt_e * 1.25), pt_e * 1.15, true);
+        splat_disc(wp1, 0.0026, col * (rgb_e * 1.25), core_e * 1.15, false);
     } else {
-        splat_point_wrap(sys_cm + q1, col * (pt_e * 0.90), pt_e * 0.72);
+        splat_point(wp1, col * (rgb_e * 0.90), core_e * 0.72);
     }
 }
 
 fn step_particle(idx: u32, t: f32) {
     let a = aspect();
-    let n_sys = select(3u, 2u, a < 2.4);
-    let sys_id = idx % n_sys;
-    let local_id = idx / n_sys;
-    let local_count = max(particle_count() / n_sys, 1u);
+    let is_narrow = a < 2.4;
+    let total = particle_count();
+    let n_active = select(total, min(6144u, total), is_narrow);
+    if (idx >= n_active) {
+        return;
+    }
+
+    let n_pairs = select(2u, 1u, is_narrow);
+    let pair_id = idx % n_pairs;
+    let local_id = idx / n_pairs;
+    let local_count = max(n_active / n_pairs, 1u);
     let norm_count = 4096.0 / f32(local_count);
 
-    let fs = f32(sys_id);
-    let sys_off = (fs / f32(n_sys) + 0.11 * hash11(fs * 19.3 + g.seed * 41.0)) * EPOCH_SECS;
-    let cycle_t = t + sys_off;
-    let gen = u32(max(floor(cycle_t / EPOCH_SECS), 0.0));
-    let phase = cycle_t - f32(gen) * EPOCH_SECS;
+    let gen = u32(max(floor(t / EPOCH_SECS), 0.0));
+    let phase = t - f32(gen) * EPOCH_SECS;
     let u_epoch = phase / EPOCH_SECS;
     let env = smoothstep(0.0, 0.075, u_epoch) * (1.0 - smoothstep(0.91, 1.0, u_epoch));
 
-    let arch = (gen + sys_id * 3u + u32(g.seed * 17.0)) % 4u;
-    let pal_id = (gen * 3u + sys_id * 2u + u32(g.seed * 23.0)) % 4u;
-    let sys_cm = system_center(sys_id, n_sys, gen, t);
-    let cores = eval_cores(arch, sys_id, gen, phase);
+    let arch = (gen + u32(g.seed * 17.0)) % 4u;
+    let pal_id = (gen * 3u + u32(g.seed * 23.0)) % 4u;
+    let is_grav = arch == 2u;
 
-    // Reserve first `cores.count` slots per system as luminous galactic nuclei / Grav suns.
+    let rgb_fade = select(exp(-g.dt / 0.055), g.fade, is_grav);
+    let core_fade = exp(-g.dt * 14.0);
+    let dt_rgb = max(1.0 - rgb_fade, 0.01);
+    let dt_core = max(1.0 - core_fade, 0.01);
+
+    let cm_cur = pair_center(pair_id, n_pairs, gen, phase, a);
+    let cores = eval_cores(arch, pair_id, gen, phase);
+
+    // Reserve first `cores.count` slots per pair as luminous galactic nuclei / Grav suns.
     if (local_id < cores.count) {
         let c = core_at(cores, local_id);
-        let pr = project_star(c.pos, sys_id, gen, phase);
-        let wy = sys_cm.y + pr.y;
-        let y_clip = smoothstep(0.02, 0.07, wy) * (1.0 - smoothstep(0.93, 0.98, wy));
-        let core_col = star_palette((pal_id + u32(c.pal_alt)) % 4u, 0u);
-        let rad = select(0.006, select(0.011, 0.0075, local_id > 0u), arch == 2u);
-        let dt_fade = max(1.0 - g.fade, 0.01);
-        let strength = select(0.75, 3.60, arch == 2u) * env * norm_count * dt_fade * y_clip;
-        let h = f32(splat_dims().y);
-        let disc_e = (rad * h) * (rad * h) * strength;
-        splat_disc(sys_cm + pr.xy, rad, core_col * disc_e, disc_e * 1.8, true);
+        let pr = project_star(c.pos, pair_id, gen, phase);
+        let wp = cm_cur + pr.xy;
+        if (wp.x >= 0.0 && wp.x <= a && wp.y >= 0.0 && wp.y <= 1.0) {
+            let edge = bezel_fade(wp, a);
+            if (edge > 0.002) {
+                let core_col = star_palette((pal_id + u32(c.pal_alt)) % 4u, 0u);
+                let rad = select(0.006, select(0.012, 0.008, local_id > 0u), is_grav);
+                let base_strength = select(0.75, 4.20, is_grav) * env * norm_count * edge;
+                let h = f32(splat_dims().y);
+                let disc_area = (rad * h) * (rad * h) * base_strength;
+                splat_disc(wp, rad, core_col * (disc_area * dt_rgb), disc_area * dt_core * 1.8, false);
+            }
+        }
         particles[idx].c.w = f32((gen % 16777215u) + 1u);
         return;
     }
 
-    if (arch == 2u && local_id >= GRAV_TRACERS) {
+    if (is_grav && local_id >= GRAV_TRACERS_PER_PAIR) {
         particles[idx].c.w = f32((gen % 16777215u) + 1u);
         return;
     }
 
-    let is_grav = arch == 2u;
     let eff_norm = select(norm_count, norm_count * 2.1, is_grav);
 
     var st = particles[idx];
@@ -548,8 +707,8 @@ fn step_particle(idx: u32, t: f32) {
     if (uninit) {
         let prewarm = select(0.0, min(phase, 5.0), g.frame < 0.5 && phase > 0.25);
         let t_start = max(phase - prewarm, 0.0);
-        let seed_cores = eval_cores(arch, sys_id, gen, t_start);
-        var spawned = spawn_star(arch, pal_id, seed_cores, sys_id, local_id, gen);
+        let seed_cores = eval_cores(arch, pair_id, gen, t_start);
+        var spawned = spawn_star(arch, pal_id, seed_cores, pair_id, local_id, gen);
         var pos = spawned.p.xyz;
         var vel = spawned.v.xyz;
 
@@ -558,7 +717,7 @@ fn step_particle(idx: u32, t: f32) {
             let w_dt = prewarm / f32(n_warm);
             for (var s = 0; s < n_warm; s = s + 1) {
                 let t_mid = t_start + (f32(s) + 0.5) * w_dt;
-                let w_cores = eval_cores(arch, sys_id, gen, t_mid);
+                let w_cores = eval_cores(arch, pair_id, gen, t_mid);
                 let a0 = grav_accel(arch, pos, w_cores);
                 vel = vel + 0.5 * a0 * w_dt;
                 pos = pos + vel * w_dt;
@@ -572,7 +731,8 @@ fn step_particle(idx: u32, t: f32) {
         }
 
         splat_star_step(
-            sys_cm,
+            cm_cur,
+            cm_cur,
             pos,
             pos,
             spawned.c.rgb,
@@ -580,11 +740,14 @@ fn step_particle(idx: u32, t: f32) {
             length(vel),
             spawned.v.w,
             env,
-            sys_id,
+            pair_id,
             gen,
             phase,
+            a,
             1,
             eff_norm,
+            dt_rgb,
+            dt_core,
             is_grav,
             true,
         );
@@ -605,8 +768,10 @@ fn step_particle(idx: u32, t: f32) {
 
     for (var s = 0; s < n_sub; s = s + 1) {
         let p_prev = pos;
-        let t_mid = max(phase - g.dt + (f32(s) + 0.5) * h_dt, 0.0);
-        let sub_cores = eval_cores(arch, sys_id, gen, t_mid);
+        let t_sub0 = max(phase - g.dt + f32(s) * h_dt, 0.0);
+        let t_sub1 = clamp(phase - g.dt + f32(s + 1) * h_dt, 0.0, EPOCH_SECS);
+        let t_mid = 0.5 * (t_sub0 + t_sub1);
+        let sub_cores = eval_cores(arch, pair_id, gen, t_mid);
 
         let a0 = grav_accel(arch, pos, sub_cores);
         vel = vel + 0.5 * a0 * h_dt;
@@ -619,13 +784,17 @@ fn step_particle(idx: u32, t: f32) {
             vel = vel * (0.65 / spd);
         }
         let rad = length(pos);
-        if (rad > 0.76) {
-            pos = pos * (0.76 / rad);
+        if (rad > 1.25) {
+            pos = pos * (1.25 / rad);
             vel = vel * 0.65;
         }
 
+        let cm_sub0 = select(cm_cur, pair_center(pair_id, n_pairs, gen, t_sub0, a), is_grav);
+        let cm_sub1 = select(cm_cur, pair_center(pair_id, n_pairs, gen, t_sub1, a), is_grav);
+
         splat_star_step(
-            sys_cm,
+            cm_sub0,
+            cm_sub1,
             p_prev,
             pos,
             col,
@@ -633,11 +802,14 @@ fn step_particle(idx: u32, t: f32) {
             spd,
             v_base,
             env,
-            sys_id,
+            pair_id,
             gen,
             phase,
+            a,
             n_sub,
             eff_norm,
+            dt_rgb,
+            dt_core,
             is_grav,
             s + 1 == n_sub,
         );
@@ -647,11 +819,13 @@ fn step_particle(idx: u32, t: f32) {
     particles[idx].v = vec4<f32>(vel, v_base);
 }
 
-fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec4<f32> {
-    let duv = vec2<f32>(DRIFT_VX * g.dt / aspect(), 0.0);
-    let prev = state_sample(uv - duv);
+fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, t: f32, splat: vec4<f32>) -> vec4<f32> {
+    let gen = u32(max(floor(t / EPOCH_SECS), 0.0));
+    let arch = (gen + u32(g.seed * 17.0)) % 4u;
+    let prev = state_sample(uv);
+    let rgb_fade = select(exp(-g.dt / 0.055), g.fade, arch == 2u);
     let core_fade = exp(-g.dt * 14.0);
-    return vec4<f32>(prev.rgb * g.fade, prev.a * core_fade) + splat;
+    return vec4<f32>(prev.rgb * rgb_fade, prev.a * core_fade) + splat;
 }
 
 fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
