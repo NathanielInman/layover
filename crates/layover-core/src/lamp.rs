@@ -20,6 +20,16 @@ impl Lamp {
         Lamp { text, alt: class.into(), class: class.into(), tooltip }
     }
 
+    /// A lamp whose text carries a short count beside the moon ("2m"),
+    /// for the minutes before the saver or left on a hold.
+    pub fn with_count(class: &str, tooltip: String, count: Option<String>) -> Lamp {
+        let mut l = Lamp::new(class, tooltip);
+        if let Some(c) = count.filter(|_| class != "off") {
+            l.text = format!("{MOON} {c}");
+        }
+        l
+    }
+
     /// The lamp when no daemon answers.
     pub fn off() -> Lamp {
         Lamp::new("off", "Layover is not running. `layover daemon` starts it.".into())

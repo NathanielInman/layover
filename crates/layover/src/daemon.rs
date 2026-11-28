@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 
 pub enum Msg {
     Idled(Station),
+    /// The idle probe fired: no input for `wayland::PROBE_SECS`.
+    IdleProbe,
     Resumed,
     WaylandGone(String),
     Note(String),
@@ -45,6 +47,8 @@ pub enum Msg {
 }
 
 const TICK: Duration = Duration::from_secs(5);
+/// How often the holds are read while a drawer is connected.
+const HOLDS_EVERY: Duration = Duration::from_secs(30);
 
 /// The exit status when another daemon holds the socket (EX_TEMPFAIL).
 pub const ALREADY_RUNNING: i32 = 75;
@@ -70,6 +74,14 @@ struct Daemon {
     /// Unix seconds when the daemon started, for the history's clock.
     started_wall: u64,
     rotation: Vec<&'static layover_hacks::Hack>,
+    /// Where in the rotation the next run starts.
+    next_at: usize,
+    /// A hack you asked to start the next run.
+    pinned: Option<&'static layover_hacks::Hack>,
+    /// The order the running saver was given.
+    run: Vec<&'static layover_hacks::Hack>,
+    /// When the holds were last read for an open drawer.
+    holds_read: Option<Instant>,
     /// What each tool's lamp says, and all of it put together.
     readings: BTreeMap<Feed, Reading>,
     desk: Desk,
@@ -142,6 +154,10 @@ pub fn run(cfg: Config) -> Result<()> {
         saver_started: None,
         started_wall,
         rotation,
+        next_at: 0,
+        pinned: None,
+        run: Vec::new(),
+        holds_read: None,
         readings: BTreeMap::new(),
         desk: Desk::default(),
         line_watchers: Vec::new(),
@@ -167,6 +183,11 @@ impl Daemon {
             if Instant::now() >= next_tick {
                 next_tick = Instant::now() + TICK;
                 self.step(Event::Tick);
+                if !self.boards.is_empty()
+                    && self.holds_read.is_none_or(|t| t.elapsed() >= HOLDS_EVERY)
+                {
+                    self.refresh_holds();
+                }
                 if let Some(at) = self.retry_at
                     && self.now() >= at
                 {
@@ -187,11 +208,20 @@ impl Daemon {
                 self.step(Event::Reached { station, holds, locked });
             }
             Msg::Resumed => self.step(Event::Resumed),
+            Msg::IdleProbe => {
+                let since = self.now().saturating_sub(crate::wayland::PROBE_SECS);
+                self.step(Event::Idle { since });
+            }
             Msg::WaylandGone(e) => bail!("lost the Wayland connection: {e}"),
             Msg::Note(n) => log(&n),
             Msg::Request(req, reply) => {
-                if let Request::Rotation { hack, weight } = &req {
-                    let answer = match self.set_weight(hack, *weight) {
+                let done = match &req {
+                    Request::Rotation { hack, weight } => Some(self.set_weight(hack, *weight)),
+                    Request::Next { hack } => Some(self.set_next(hack.as_deref())),
+                    _ => None,
+                };
+                if let Some(result) = done {
+                    let answer = match result {
                         Ok(()) => Reply::Lamp(self.model.lamp()),
                         Err(e) => Reply::Error { error: format!("{e:#}") },
                     };
@@ -200,16 +230,19 @@ impl Daemon {
                 }
                 let event = match req {
                     Request::Status | Request::Watch | Request::Board | Request::Line => None,
-                    Request::Rotation { .. } => None,
+                    Request::Rotation { .. } | Request::Next { .. } => None,
                     Request::Hold { secs } => Some(Event::Hold { secs }),
+                    Request::Extend { secs } => Some(Event::Extend { secs }),
                     Request::Release => Some(Event::Release),
                     Request::Now => Some(Event::Now),
                     Request::Stop => Some(Event::Stop),
                     Request::Toggle { anchor } => {
+                        self.refresh_holds();
                         self.send_board(BoardEvent::Toggle { anchor });
                         None
                     }
                     Request::Show { anchor } => {
+                        self.refresh_holds();
                         self.send_board(BoardEvent::Show { anchor });
                         None
                     }
@@ -263,7 +296,9 @@ impl Daemon {
             Msg::SaverExited { pid, status } => {
                 if self.saver_pid == Some(pid) {
                     self.saver_pid = None;
-                    self.saver_started = None;
+                    if let Some(t) = self.saver_started.take() {
+                        self.finish_run(t.elapsed().as_secs_f32());
+                    }
                     log(&format!("saver exited: {status}"));
                     self.step(Event::SaverExited);
                 }
@@ -285,8 +320,58 @@ impl Daemon {
         config_edit::write(&path, &text)?;
         log(&format!("rotation: {id} {}", weight.as_str()));
         self.cfg.saver = cfg.saver;
+        self.next_at %= rotation.len().max(1);
         self.rotation = rotation;
         Ok(())
+    }
+
+    /// The order of the next run: the hack you pinned, then the rotation
+    /// from where the last run stopped.
+    fn upcoming(&self) -> Vec<&'static layover_hacks::Hack> {
+        let n = self.rotation.len();
+        let mut out: Vec<_> = self.pinned.into_iter().collect();
+        out.extend((0..n).map(|i| self.rotation[(self.next_at + i) % n]));
+        out
+    }
+
+    /// A run ended `elapsed` seconds in: the next one starts after the last
+    /// hack it showed, so every hack gets its turn across short runs.
+    fn finish_run(&mut self, elapsed: f32) {
+        let mut shown = layover_hacks::turns(&self.run, &self.cfg.care, elapsed);
+        if self.pinned.take().is_some() {
+            shown = shown.saturating_sub(1);
+        }
+        if !self.rotation.is_empty() {
+            self.next_at = (self.next_at + shown) % self.rotation.len();
+        }
+        self.run.clear();
+    }
+
+    /// Pin `id` to start the next run, or with None skip the hack that
+    /// would come next.
+    fn set_next(&mut self, id: Option<&str>) -> Result<()> {
+        match id {
+            Some(id) => {
+                let h = layover_hacks::find(id).ok_or_else(|| {
+                    anyhow::anyhow!("no hack called `{id}` (`layover hacks` lists them)")
+                })?;
+                self.pinned = Some(h);
+                log(&format!("next run starts with {id}"));
+            }
+            None => {
+                if self.pinned.take().is_none() && !self.rotation.is_empty() {
+                    self.next_at = (self.next_at + 1) % self.rotation.len();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads what holds the line for an open drawer, at most every 30s.
+    fn refresh_holds(&mut self) {
+        let (holds, _) = self.read_holds();
+        self.holds_read = Some(Instant::now());
+        self.step(Event::Holds { holds });
     }
 
     fn step(&mut self, event: Event) {
@@ -345,8 +430,12 @@ impl Daemon {
             Err(e) => return log(&format!("can't find my own binary to start the saver: {e}")),
         };
         let (out, err) = crate::log::child_output();
+        self.run = self.upcoming();
         let mut cmd = Command::new(exe);
         cmd.arg("saver").stdin(Stdio::null()).stdout(out).stderr(err);
+        for h in &self.run {
+            cmd.args(["--hack", h.id]);
+        }
         // SAFETY: prctl only; the saver dies with the daemon.
         unsafe {
             cmd.pre_exec(|| {
@@ -431,11 +520,12 @@ impl Daemon {
     fn snapshot_line(&self) -> String {
         let started = self.started_wall;
         let clock = move |at: u64| crate::log::clock_at(started + at);
-        let hack = self.saver_started.map(|t| {
+        let hack = self.saver_started.filter(|_| !self.run.is_empty()).map(|t| {
             let (h, _) =
-                layover_hacks::showing(&self.rotation, &self.cfg.care, t.elapsed().as_secs_f32());
+                layover_hacks::showing(&self.run, &self.cfg.care, t.elapsed().as_secs_f32());
             h.name.to_string()
         });
+        let up_next = self.upcoming().iter().take(4).map(|h| h.id.to_string()).collect();
         let hacks = layover_hacks::HACKS
             .iter()
             .map(|h| {
@@ -450,7 +540,7 @@ impl Daemon {
                 }
             })
             .collect();
-        let snapshot = self.model.snapshot(&clock, hack, hacks);
+        let snapshot = self.model.snapshot(&clock, hack, hacks, up_next);
         serde_json::to_string(&BoardEvent::Snapshot { snapshot: Box::new(snapshot) })
             .expect("a snapshot is plain data")
     }

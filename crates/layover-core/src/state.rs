@@ -5,7 +5,7 @@
 //! carries out the [`Effect`]s. Every rule about what happens when lives here
 //! with a test; the daemon only does I/O.
 
-use crate::board::{self, HackView, HistoryView, LooseView, Snapshot, StationView};
+use crate::board::{self, HackView, HistoryView, HoldView, LooseView, Rail, Snapshot, StationView};
 use crate::config::{AudioHold, Config, LockAt};
 use crate::holds::HoldSnapshot;
 use crate::lamp::Lamp;
@@ -45,6 +45,13 @@ pub enum Event {
     SaverExited,
     /// `layover hold`: hold the line for this many seconds.
     Hold { secs: u64 },
+    /// `layover hold +15m` or `-15m`: lengthen or shorten your hold; one
+    /// that reaches zero is released.
+    Extend { secs: i64 },
+    /// Nobody has touched the desk since `since` (the daemon's idle probe).
+    Idle { since: u64 },
+    /// What holds the line now, read while a drawer is open.
+    Holds { holds: HoldSnapshot },
     /// `layover release`: end a manual hold.
     Release,
     /// `layover now`: start the saver now.
@@ -81,6 +88,9 @@ pub enum Phase {
 /// How often a held station is checked again.
 pub const RETRY_SECS: u64 = 60;
 
+/// The lamp counts down to the saver over its last this many seconds.
+pub const COUNTDOWN: u64 = 5 * 60;
+
 /// How many transitions the history keeps.
 pub const HISTORY: usize = 50;
 
@@ -109,6 +119,7 @@ struct Rules {
     loose: Vec<String>,
     stations: Vec<StationView>,
     loose_views: Vec<LooseView>,
+    rail: Rail,
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +141,10 @@ pub struct Model {
     retrying: bool,
     /// Why the saver draws in cheap mode, while it does.
     cheap: Option<String>,
+    /// When the last input was, while the desk is idle.
+    idle_from: Option<u64>,
+    /// The holds as last read.
+    holds: HoldSnapshot,
 }
 
 impl Model {
@@ -153,6 +168,18 @@ impl Model {
                 loose: cfg.loosened().iter().map(|l| format!("{} = {}", l.key, l.value)).collect(),
                 stations: board::stations(cfg),
                 loose_views: board::loosened(cfg),
+                rail: {
+                    let mins = |s: Span| s.duration().map(|d| d.as_secs() / 60);
+                    Rail {
+                        saver: mins(cfg.line.saver),
+                        lock: match cfg.line.lock {
+                            LockAt::Dark => mins(cfg.line.dark),
+                            LockAt::After(d) => Some(d.as_secs() / 60),
+                            LockAt::Off => None,
+                        },
+                        dark: mins(cfg.line.dark),
+                    }
+                },
             },
             phase: Phase::Active,
             locked: false,
@@ -165,6 +192,8 @@ impl Model {
             noted_hold: None,
             retrying: false,
             cheap: None,
+            idle_from: None,
+            holds: HoldSnapshot::default(),
         }
     }
 
@@ -187,6 +216,7 @@ impl Model {
         clock: &dyn Fn(u64) -> String,
         hack: Option<String>,
         hacks: Vec<HackView>,
+        up_next: Vec<String>,
     ) -> Snapshot {
         let lamp = self.lamp();
         let headline = match lamp.class.as_str() {
@@ -217,8 +247,79 @@ impl Model {
                     why: e.why.clone(),
                 })
                 .collect(),
+            idle_mins: self.idle_secs() / 60,
+            rail: self.rules.rail.clone(),
+            holding: self.holding(),
+            hold_mins: self.manual_left().map(|s| s.div_ceil(60)),
+            up_next,
             lamp,
         }
+    }
+
+    /// Seconds since the last input, while the daemon can tell.
+    pub fn idle_secs(&self) -> u64 {
+        self.idle_from.map(|f| self.now.saturating_sub(f)).unwrap_or(0)
+    }
+
+    /// What holds the line under the holds as last read, worded for the
+    /// drawer: what each one is and which stations it stops.
+    pub fn holding(&self) -> Vec<HoldView> {
+        let h = &self.holds;
+        let all = "Holds the saver, the lock and the dark.";
+        let view =
+            |what: String, effect: &str| HoldView { what, effect: effect.into(), mine: false };
+        let mut out = Vec::new();
+        if let Some(left) = self.manual_left() {
+            out.push(HoldView {
+                what: format!("Held by you, {} more", round_minutes(left)),
+                effect: "Nothing on the line runs until then.".into(),
+                mine: true,
+            });
+        }
+        if self.rules.inhibitors && !h.inhibitors.is_empty() {
+            out.push(view(format!("{} keeps the screen on", h.inhibitors.join(", ")), all));
+        }
+        if self.rules.mic && h.mic {
+            out.push(view("A microphone is recording".into(), all));
+        }
+        if self.rules.hold_on_air && h.on_air {
+            out.push(view("Logbook is on air".into(), all));
+        }
+        if self.rules.hold_meeting && h.meeting_soon {
+            out.push(view(
+                "A meeting is about to start (Timetable)".into(),
+                "Holds the saver until it starts.",
+            ));
+        }
+        if h.audio {
+            match self.rules.audio {
+                AudioHold::All => out.push(view("Audio is playing".into(), all)),
+                AudioHold::Dark => out.push(view(
+                    "Audio is playing".into(),
+                    "Holds the dark only: the saver still runs, so a still desktop never sits on the panel.",
+                )),
+                AudioHold::Off => {}
+            }
+        }
+        out
+    }
+
+    /// What the lamp's text carries beside the moon: the minutes left on
+    /// your hold, or the minutes before the saver in its last five.
+    fn lamp_count(&self) -> Option<String> {
+        if self.phase != Phase::Active {
+            return None;
+        }
+        if let Some(left) = self.manual_left() {
+            return Some(round_minutes(left));
+        }
+        if !self.pending.is_empty() || self.locked {
+            return None;
+        }
+        let saver = self.rules.saver_span.duration()?.as_secs();
+        let idle = self.idle_from.map(|f| self.now.saturating_sub(f))?;
+        let left = saver.saturating_sub(idle);
+        (left > 0 && left <= COUNTDOWN).then(|| round_minutes(left))
     }
 
     pub fn phase(&self) -> Phase {
@@ -246,6 +347,15 @@ impl Model {
         match event {
             Event::Reached { station, holds, locked } => {
                 self.locked = locked;
+                if self.idle_from.is_none() {
+                    let after = match station {
+                        Station::Saver => self.rules.saver_span.duration(),
+                        Station::Dark => self.rules.dark_span.duration(),
+                        _ => None,
+                    };
+                    self.idle_from = after.map(|d| now.saturating_sub(d.as_secs()));
+                }
+                self.holds = holds.clone();
                 self.pending.remove(&station);
                 self.reach(station, &holds, &mut out);
             }
@@ -264,6 +374,7 @@ impl Model {
                 self.retrying = false;
             }
             Event::Resumed => {
+                self.idle_from = None;
                 self.pending.clear();
                 self.held_by = None;
                 self.noted_hold = None;
@@ -291,6 +402,26 @@ impl Model {
                 self.manual_until = Some(now + secs);
                 self.note("Held", format!("by you for {}", round_minutes(secs)));
             }
+            Event::Extend { secs } => {
+                let left = self.manual_left().unwrap_or(0) as i64 + secs;
+                if left > 0 {
+                    if self.manual_left().is_none() {
+                        self.note("Held", format!("by you for {}", round_minutes(left as u64)));
+                    }
+                    self.manual_until = Some(now + left as u64);
+                } else if self.manual_until.take().is_some() {
+                    self.note("Hold released", "you released it");
+                    if !self.pending.is_empty() {
+                        out.push(Effect::Retry { after: 0 });
+                    }
+                }
+            }
+            Event::Idle { since } => {
+                if self.idle_from.is_none() {
+                    self.idle_from = Some(since.min(now));
+                }
+            }
+            Event::Holds { holds } => self.holds = holds,
             Event::Release => {
                 if self.manual_until.take().is_some() {
                     self.note("Hold released", "you released it");
@@ -529,7 +660,7 @@ impl Model {
         } else {
             class
         };
-        Lamp::new(class, lines.join("\n"))
+        Lamp::with_count(class, lines.join("\n"), self.lamp_count())
     }
 }
 
@@ -687,6 +818,59 @@ mod tests {
     }
 
     #[test]
+    fn the_lamp_counts_down_the_last_five_minutes_before_the_saver() {
+        let mut m = model("");
+        m.step(10, Event::Idle { since: 0 });
+        assert_eq!(m.lamp().text, crate::lamp::MOON, "no count with 15m to go");
+        m.step(600, Event::Tick);
+        assert_eq!(m.lamp().text, format!("{} 5m", crate::lamp::MOON));
+        m.step(841, Event::Tick);
+        assert_eq!(m.lamp().text, format!("{} 1m", crate::lamp::MOON));
+        assert_eq!(m.idle_secs(), 841);
+        m.step(842, Event::Resumed);
+        assert_eq!(m.lamp().text, crate::lamp::MOON);
+        assert_eq!(m.idle_secs(), 0);
+    }
+
+    #[test]
+    fn a_reached_station_tells_how_long_the_desk_was_idle() {
+        let mut m = model("");
+        m.step(1000, Event::Hold { secs: 3600 });
+        reach(&mut m, 1900, Station::Saver, quiet());
+        assert_eq!(m.idle_secs(), 900);
+    }
+
+    #[test]
+    fn scrolling_lengthens_shortens_and_releases_a_hold() {
+        let mut m = model("");
+        m.step(0, Event::Extend { secs: 900 });
+        assert_eq!(m.lamp().class, "held");
+        assert_eq!(m.lamp().text, format!("{} 15m", crate::lamp::MOON));
+        m.step(60, Event::Extend { secs: 900 });
+        assert_eq!(m.lamp().text, format!("{} 29m", crate::lamp::MOON));
+        assert_eq!(whats(&m), ["Held: by you for 15m"], "a longer hold is not a new one");
+        m.step(120, Event::Extend { secs: -1800 });
+        assert_eq!(m.lamp().class, "armed");
+        assert_eq!(whats(&m), ["Held: by you for 15m", "Hold released: you released it"]);
+    }
+
+    #[test]
+    fn the_drawer_says_what_each_hold_stops() {
+        let mut m = model("");
+        m.step(0, Event::Holds { holds: music() });
+        let h = m.holding();
+        assert_eq!(h.len(), 1);
+        assert!(h[0].effect.contains("dark only"), "{}", h[0].effect);
+        m.step(0, Event::Hold { secs: 600 });
+        assert!(m.holding()[0].mine);
+        let s = m.snapshot(&|_| String::new(), None, vec![], vec!["starfield".into()]);
+        assert_eq!(s.hold_mins, Some(10));
+        assert_eq!(s.rail.saver, Some(15));
+        assert_eq!(s.rail.lock, Some(60), "the lock comes with the dark");
+        assert_eq!(s.up_next, ["starfield"]);
+    }
+
+    #[test]
     fn release_retries_right_away() {
         let mut m = model("");
         m.step(0, Event::Hold { secs: 3600 });
@@ -752,10 +936,10 @@ mod tests {
     fn the_snapshot_is_newest_first_and_names_the_hack_only_while_it_runs() {
         let mut m = model("");
         let clock = |t: u64| format!("t{t}");
-        assert_eq!(m.snapshot(&clock, Some("Starfield".into()), vec![]).hack, None);
+        assert_eq!(m.snapshot(&clock, Some("Starfield".into()), vec![], vec![]).hack, None);
         m.step(5, Event::Now);
         m.step(9, Event::Hold { secs: 3600 });
-        let s = m.snapshot(&clock, Some("Starfield".into()), vec![]);
+        let s = m.snapshot(&clock, Some("Starfield".into()), vec![], vec![]);
         assert_eq!(s.hack.as_deref(), Some("Starfield"));
         assert_eq!(s.headline, "Saver running");
         assert_eq!(s.history[0].what, "Held");
@@ -800,7 +984,7 @@ mod tests {
         m.step(9, Event::Cheap { why: None });
         let told: Vec<_> = m.history().map(|e| e.what.as_str()).collect();
         assert_eq!(told, ["Cheap mode", "Full rate"]);
-        assert_eq!(m.snapshot(&|_| String::new(), None, vec![]).cheap, None);
+        assert_eq!(m.snapshot(&|_| String::new(), None, vec![], vec![]).cheap, None);
     }
 
     #[test]

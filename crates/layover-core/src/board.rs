@@ -32,6 +32,42 @@ pub struct Snapshot {
     pub hacks: Vec<HackView>,
     /// Newest first.
     pub history: Vec<HistoryView>,
+    /// Whole minutes without input, when the daemon can tell (0 while
+    /// someone is at the desk).
+    #[serde(default)]
+    pub idle_mins: u64,
+    /// Minutes from the last input to each station, for the rail.
+    #[serde(default)]
+    pub rail: Rail,
+    /// What holds the line right now and what each hold stops.
+    #[serde(default)]
+    pub holding: Vec<HoldView>,
+    /// Minutes left on a hold you started.
+    #[serde(default)]
+    pub hold_mins: Option<u64>,
+    /// The hacks the next run starts with, by id, in order.
+    #[serde(default)]
+    pub up_next: Vec<String>,
+}
+
+/// Where the stations sit on the rail, in minutes from the last input;
+/// None for a station that is off.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rail {
+    pub saver: Option<u64>,
+    pub lock: Option<u64>,
+    pub dark: Option<u64>,
+}
+
+/// One thing holding the line, worded for the drawer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HoldView {
+    /// "Audio is playing".
+    pub what: String,
+    /// "Holds the dark only: the saver still runs."
+    pub effect: String,
+    /// A hold you started, which Release ends.
+    pub mine: bool,
 }
 
 /// One station on the idle line as the drawer's rail shows it.

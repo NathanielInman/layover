@@ -21,6 +21,12 @@ use wayland_protocols_wlr::output_power_management::v1::client::{
     zwlr_output_power_manager_v1, zwlr_output_power_v1,
 };
 
+/// The idle probe's timeout: the desk has been idle this long when it fires.
+pub const PROBE_SECS: u64 = 10;
+
+/// The idle probe's notification.
+pub struct Probe;
+
 pub struct WlState {
     tx: Sender<Msg>,
     outputs: Arc<Mutex<Vec<wl_output::WlOutput>>>,
@@ -114,6 +120,13 @@ pub fn start(cfg: &Config, tx: Sender<Msg>) -> Result<(Screens, Offer)> {
             notifier.get_idle_notification(timeout, &seat, &qh, station);
         }
     }
+    // A short probe tells when the last input was, for the countdowns.
+    let probe = ms(std::time::Duration::from_secs(PROBE_SECS));
+    if input_idle {
+        notifier.get_input_idle_notification(probe, &seat, &qh, Probe);
+    } else {
+        notifier.get_idle_notification(probe, &seat, &qh, Probe);
+    }
     conn.flush().context("talking to the compositor")?;
 
     std::thread::Builder::new()
@@ -165,6 +178,21 @@ impl Dispatch<ext_idle_notification_v1::ExtIdleNotificationV1, Station> for WlSt
             _ => return,
         };
         let _ = state.tx.send(msg);
+    }
+}
+
+impl Dispatch<ext_idle_notification_v1::ExtIdleNotificationV1, Probe> for WlState {
+    fn event(
+        state: &mut Self,
+        _: &ext_idle_notification_v1::ExtIdleNotificationV1,
+        event: ext_idle_notification_v1::Event,
+        _: &Probe,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_idle_notification_v1::Event::Idled = event {
+            let _ = state.tx.send(Msg::IdleProbe);
+        }
     }
 }
 

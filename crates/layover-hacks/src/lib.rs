@@ -708,6 +708,29 @@ pub fn showing(
     (hacks[0], 1.0)
 }
 
+/// How many turns had begun `elapsed` seconds into a run of `hacks`: the
+/// one on screen counts.
+pub fn turns(hacks: &[&'static Hack], care: &layover_core::config::Care, elapsed: f32) -> usize {
+    if hacks.is_empty() {
+        return 0;
+    }
+    let spans: Vec<f32> = hacks
+        .iter()
+        .map(|h| {
+            if h.text_heavy { care.text_rotate.0 } else { care.rotate.0 }.as_secs_f32().max(30.0)
+        })
+        .collect();
+    let cycle: f32 = spans.iter().sum::<f32>().max(1.0);
+    let rounds = (elapsed / cycle).floor().max(0.0) as usize;
+    let mut at = elapsed.max(0.0) % cycle;
+    let mut i = 0;
+    while i + 1 < spans.len() && at >= spans[i] {
+        at -= spans[i];
+        i += 1;
+    }
+    rounds * hacks.len() + i + 1
+}
+
 /// The rotation for a `[saver] hacks` list: every hack when empty. Unknown
 /// ids come back as errors so the config check can name them.
 pub fn rotation(ids: &[String]) -> Result<Vec<&'static Hack>, String> {
@@ -810,6 +833,16 @@ mod tests {
         assert!(run_order(&saver(&every, &[])).unwrap_err().contains("keep at least one"));
         assert!(run_order(&saver(&["nope"], &[])).unwrap_err().contains("nope"));
         assert!(run_order(&saver(&[], &["nope"])).unwrap_err().contains("often"));
+    }
+
+    #[test]
+    fn turns_count_the_hack_on_screen() {
+        let care = layover_core::config::Care::default();
+        let all = rotation(&[]).unwrap();
+        assert_eq!(turns(&all, &care, 0.0), 1);
+        assert_eq!(turns(&all, &care, 601.0), 2);
+        let cycle: f32 = (all.len() - 1) as f32 * 600.0 + 180.0;
+        assert_eq!(turns(&all, &care, cycle + 1.0), all.len() + 1);
     }
 
     #[test]

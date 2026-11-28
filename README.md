@@ -156,8 +156,8 @@ bind, press Enter on the empty field and touch the key when the cue shows.
 
 | Lamp | Means |
 | --- | --- |
-| dim moon | armed, waiting |
-| amber moon | held (the tooltip says by what), or your config is looser than shipped |
+| dim moon | armed, waiting; in the last five minutes it counts down to the saver |
+| amber moon | held (the tooltip says by what; your own hold shows its minutes left), or your config is looser than shipped |
 | frost moon | a hack is running |
 | none | the daemon isn't running |
 
@@ -185,6 +185,8 @@ layover toggle [--center]      open or close the drawer from the clicked moon
 layover status                 what the idle line is doing, and why
 layover now | stop             start or stop the saver
 layover hold 1h | release      hold the line, or end the hold
+layover hold +15m | -15m       lengthen or shorten your hold
+layover next [<id>]            start the next run with a hack, or skip the one up next
 layover check                  check the config and list loosened values
 layover doctor                 check the setup (exits 1 when something is broken)
 layover hacks                  list the hacks (* in the rotation, ** starred)

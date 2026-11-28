@@ -61,6 +61,11 @@ itself (see holds) and can skip the ones that are always on. Without
 version 2 Layover falls back to `get_idle_notification`, logs that inhibitors
 can no longer be filtered, and every inhibitor holds the line.
 
+A 10 second idle probe beside the stations tells the daemon when the last
+input was, so the drawer's rail and the lamp can count down to the saver.
+It only marks the time; the stations still come from their own
+notifications.
+
 Output power uses `zwlr_output_power_manager_v1`. Without it the daemon runs
 `line.dark_command` and `line.wake_command` when set, and otherwise logs that
 it cannot turn the screens off.
@@ -183,7 +188,11 @@ Each frame:
    scale, limiter gain, white cap and fade.
 
 Hacks hand off with a fade through black. Text-heavy hacks declare it and use
-`care.text_rotate`. Image hacks (Tier I, once wired) read only from a
+`care.text_rotate`. A run does not start from the top: the daemon passes the
+saver its order (`--hack` once per turn), starting after the last hack the
+previous run showed, so short runs still reach every hack. `layover next
+<id>` (Play it next time on a sheet) pins a hack to start the next run;
+`layover next` alone skips the hack that would come next. Image hacks (Tier I, once wired) read only from a
 user-configured picture folder and never capture the desktop
 (`ext-image-copy-capture` or `wlr-screencopy` are out of bounds); unconfigured
 or empty folders skip them from rotation.
@@ -300,8 +309,10 @@ One JSON object per line. Requests: `{"cmd":"status"}`, `{"cmd":"watch"}`
 saver now), `{"cmd":"stop"}`, `{"cmd":"toggle","anchor":A}` and
 `{"cmd":"show","anchor":A}` (open the drawer from the bar, `A` being
 bar-anchor's `Anchor` or absent to center it), `{"cmd":"board"}`,
-`{"cmd":"line"}` and `{"cmd":"rotation","hack":ID,"weight":W}` (`W` is
-`never`, `sometimes` or `often`). Replies
+`{"cmd":"line"}`, `{"cmd":"rotation","hack":ID,"weight":W}` (`W` is
+`never`, `sometimes` or `often`), `{"cmd":"extend","secs":N}` (lengthen
+your hold by `N` seconds, or shorten it with a negative `N`; one that reaches
+zero is released) and `{"cmd":"next","hack":ID}` (`hack` absent skips). Replies
 are a lamp `{"text","alt","class","tooltip"}` or `{"error"}`.
 
 `line` keeps the connection open for the saver and sends
@@ -368,4 +379,7 @@ Keys: `1` to `3` pick a tab, `n` starts the saver, `h` holds for an hour,
 | `off` | nothing | the daemon is not running |
 
 The text is the Nerd Font moon (md-weather-night, U+F0594) in every state
-but `off`: waybar hides a custom module whose text is empty.
+but `off`: waybar hides a custom module whose text is empty. Beside it, the
+lamp counts the minutes left on a hold you started ("42m"), and in the last
+five minutes before the saver the minutes until it starts ("2m"), so the
+saver never takes you by surprise.

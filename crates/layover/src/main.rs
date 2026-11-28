@@ -32,7 +32,9 @@ Usage:
   layover status                 what the idle line is doing, and why
   layover now                    start the saver now
   layover stop                   stop the saver
-  layover hold <duration>        hold the saver, the lock and the dark (\"1h\", \"30m\")
+  layover hold <duration>        hold the saver, the lock and the dark (\"1h\", \"30m\");
+                                 \"+15m\" or \"-15m\" lengthens or shortens a hold
+  layover next [<id>]            start the next run with a hack, or skip the one up next
   layover release                end a hold
   layover check                  check the config and list every value looser than shipped
   layover doctor                 check the setup: the daemon, the compositor, Vulkan,
@@ -107,8 +109,31 @@ fn run(args: &[String]) -> Result<i32> {
         "release" => print_reply(ask(&Request::Release)?),
         "hold" => {
             let d = rest.first().ok_or_else(|| anyhow!("hold how long? e.g. `layover hold 1h`"))?;
+            // `+15m` and `-15m` lengthen and shorten a hold (the lamp's wheel).
+            let (sign, d) = match d.as_bytes().first() {
+                Some(b'+') => (Some(1), &d[1..]),
+                Some(b'-') => (Some(-1), &d[1..]),
+                _ => (None, d.as_str()),
+            };
             let secs = parse_duration(d).map_err(|e| anyhow!(e))?.as_secs();
-            print_reply(ask(&Request::Hold { secs })?)
+            print_reply(ask(&match sign {
+                Some(s) => Request::Extend { secs: s * secs as i64 },
+                None => Request::Hold { secs },
+            })?)
+        }
+        "next" => {
+            let hack = rest.first().cloned();
+            if let Some(id) = &hack
+                && layover_hacks::find(id).is_none()
+            {
+                bail!("no hack called `{id}` (`layover hacks` lists them)");
+            }
+            ask(&Request::Next { hack: hack.clone() })?;
+            match hack {
+                Some(id) => println!("the next run starts with {id}"),
+                None => println!("skipped the hack that was next"),
+            }
+            Ok(0)
         }
         "check" => check(),
         "doctor" => {

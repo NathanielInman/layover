@@ -38,6 +38,17 @@ pub enum Request {
         hack: String,
         weight: Weight,
     },
+    /// Lengthen (or, negative, shorten) your hold by this many seconds; a
+    /// hold that reaches zero is released. Starts one when none runs.
+    Extend {
+        secs: i64,
+    },
+    /// Start the next run with this hack, or with no hack skip the one
+    /// that would come next.
+    Next {
+        #[serde(default)]
+        hack: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +84,14 @@ mod tests {
             )
             .unwrap(),
             Request::Rotation { hack: "starfield".into(), weight: Weight::Often }
+        );
+        assert_eq!(
+            serde_json::from_str::<Request>(r#"{"cmd":"extend","secs":-900}"#).unwrap(),
+            Request::Extend { secs: -900 }
+        );
+        assert_eq!(
+            serde_json::from_str::<Request>(r#"{"cmd":"next"}"#).unwrap(),
+            Request::Next { hack: None }
         );
     }
 
