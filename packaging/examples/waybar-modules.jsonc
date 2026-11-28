@@ -5,6 +5,8 @@
   "return-type": "json",
   "on-click": "~/.local/bin/layover toggle",
   "on-click-middle": "~/.local/bin/layover now",
-  "on-click-right": "~/.local/bin/layover hold 1h",
+  "on-click-right": "~/.local/bin/layover menu",
+  "on-scroll-up": "~/.local/bin/layover hold +15m",
+  "on-scroll-down": "~/.local/bin/layover hold -15m",
   "tooltip": true
 }

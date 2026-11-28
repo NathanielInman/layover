@@ -294,7 +294,9 @@ defaults.
 - `layover saver`: the overlay surfaces and the renderer. The daemon starts it
   and stops it with SIGTERM; it also exits on its own on any key, button or
   pointer movement past a few pixels.
-- `layover bar`: the waybar module, one JSON line per lamp change.
+- `layover bar`: the waybar module, one JSON line per lamp change. Waybar
+  reads a custom module's tooltip as Pango markup, so `bar` escapes it and
+  sets the first line (the state and why) in bold.
 - `layover doctor`: one `ok`, `fail` or `info` line per check: the config
   and its hacks, the daemon (a `status` request) and `layover.service`, the
   compositor's `ext_idle_notifier_v1`, `zwlr_layer_shell_v1` and
@@ -354,6 +356,12 @@ values with their reasons, whether a manual hold runs, the hack on screen
 and the history, every string already worded.
 
 ## The drawer
+
+`layover menu` (the lamp's right click, `{"cmd":"menu","anchor":A}`) opens
+the same panel 300 pixels wide as a quick menu: the state and how long until
+the saver or left on your hold, Hold everything for 30m, 1h, 2h or 4h, Start
+saver now (`n`), Audition hacks (`a`), Open the drawer (`o`) and Release
+(`r`). The lamp's wheel runs `layover hold +15m` and `-15m`.
 
 `layover toggle` asks the compositor where the click was while the cursor
 is still on the moon and sends the anchor; the drawer covers the monitor

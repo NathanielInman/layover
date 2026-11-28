@@ -26,7 +26,7 @@ the care pass, the wear test or a default.
 - `layover-board`: the GTK4 layer-shell drawer. `anim.rs` and `stage.rs`
   came from Tannoy's board, `theme.rs` reads the bar's look. Check its
   layout headless with `GDK_BACKEND=broadway layover-board --shot out.png
-  snapshot.json [now|hacks|history]` (a snapshot is the `snapshot` field of
+  snapshot.json [now|hacks|hacks-list|sheet:<id>|history|menu]` (a snapshot is the `snapshot` field of
   a `{"cmd":"board"}` line).
 
 ## Build and test

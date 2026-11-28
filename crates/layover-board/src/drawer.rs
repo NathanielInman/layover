@@ -54,6 +54,12 @@ impl Tab {
     }
 }
 
+/// What a quick menu item does.
+type MenuAction = Box<dyn Fn(&Rc<Drawer>)>;
+
+/// The quick menu's width.
+const MENU_WIDTH: f64 = 300.0;
+
 /// How long a notice stays.
 const NOTICE_FOR: Duration = Duration::from_secs(4);
 /// How long `Preview` shows a hack.
@@ -165,6 +171,10 @@ pub struct Drawer {
     pub(crate) hacks_rows: Cell<bool>,
     /// The hack whose sheet is open.
     pub(crate) sheet: RefCell<Option<String>>,
+    /// Open as the quick menu: small, no header, tabs or keys line.
+    menu: Cell<bool>,
+    /// The header, tabs and keys line, hidden in the quick menu.
+    chrome: Vec<gtk::Widget>,
 }
 
 impl Drawer {
@@ -268,6 +278,8 @@ impl Drawer {
             hacks_query: RefCell::new(String::new()),
             hacks_rows: Cell::new(false),
             sheet: RefCell::new(None),
+            menu: Cell::new(false),
+            chrome: vec![header.upcast(), tabrow.upcast(), foot.upcast()],
         });
         d.connect();
         d
@@ -311,10 +323,17 @@ impl Drawer {
             }
             Msg::Event(BoardEvent::Show { anchor }) => self.show(anchor),
             Msg::Event(BoardEvent::Toggle { anchor }) => {
-                if self.visible.get() {
+                if self.visible.get() && !self.menu.get() {
                     self.hide();
                 } else {
                     self.show(anchor);
+                }
+            }
+            Msg::Event(BoardEvent::Menu { anchor }) => {
+                if self.visible.get() && self.menu.get() {
+                    self.hide();
+                } else {
+                    self.show_menu(anchor);
                 }
             }
             Msg::Event(BoardEvent::Hide) => self.hide(),
@@ -389,6 +408,24 @@ impl Drawer {
     }
 
     fn key(self: &Rc<Self>, key: gdk::Key) -> glib::Propagation {
+        if self.menu.get() {
+            match key {
+                gdk::Key::Escape => self.hide(),
+                gdk::Key::n => self.start_now(),
+                gdk::Key::a => self.audition(None),
+                gdk::Key::o => self.show(None),
+                gdk::Key::r => {
+                    self.send(Request::Release);
+                    self.hide();
+                }
+                gdk::Key::h => {
+                    self.send(Request::Hold { secs: 3600 });
+                    self.hide();
+                }
+                _ => return glib::Propagation::Proceed,
+            }
+            return glib::Propagation::Stop;
+        }
         if self.tab.get() == Tab::Hacks && self.sheet_key(key) {
             return glib::Propagation::Stop;
         }
@@ -422,6 +459,30 @@ impl Drawer {
     }
 
     fn show(self: &Rc<Self>, anchor: Option<Anchor>) {
+        self.set_menu(false);
+        self.open(anchor);
+    }
+
+    fn show_menu(self: &Rc<Self>, anchor: Option<Anchor>) {
+        self.set_menu(true);
+        self.open(anchor);
+    }
+
+    /// Switches between the drawer and the quick menu.
+    fn set_menu(self: &Rc<Self>, on: bool) {
+        if self.menu.replace(on) == on && self.visible.get() {
+            return;
+        }
+        for w in &self.chrome {
+            w.set_visible(!on);
+        }
+        let cfg = self.cfg.borrow();
+        let width = if on { MENU_WIDTH } else { cfg.drawer.width };
+        self.stage.set_geometry(width, cfg.drawer.max_height, cfg.drawer.gap);
+        self.rendered.borrow_mut().clear();
+    }
+
+    fn open(self: &Rc<Self>, anchor: Option<Anchor>) {
         if let Some(name) = anchor.as_ref().and_then(|a| a.monitor.clone())
             && let Some(m) = find_monitor(&name)
         {
@@ -487,6 +548,15 @@ impl Drawer {
             Tab::History => serde_json::to_string(&snap.history).unwrap_or_default(),
             Tab::Now => serde_json::to_string(&snap).unwrap_or_default(),
         };
+        if self.menu.get() {
+            let key = format!("menu|{}", serde_json::to_string(&snap).unwrap_or_default());
+            if *self.rendered.borrow() != key {
+                *self.rendered.borrow_mut() = key;
+                clear(&self.content);
+                self.render_menu(&snap);
+            }
+            return;
+        }
         let key = format!(
             "{:?}|{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
             self.tab.get(),
@@ -579,6 +649,72 @@ impl Drawer {
             }
             self.content.append(&loose);
         }
+    }
+
+    /// The quick menu: where the line is, holds, and the few things done
+    /// from the lamp.
+    fn render_menu(self: &Rc<Self>, s: &Snapshot) {
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        head.append(&label(&s.headline, &["menu-state", &s.state]));
+        let aside = match (s.hold_mins, s.rail.saver) {
+            (Some(m), _) => format!("{} left", mins(m)),
+            (None, Some(at)) if matches!(s.state.as_str(), "armed" | "loose") => {
+                format!("saver in {}", mins(at.saturating_sub(s.idle_mins)))
+            }
+            _ => String::new(),
+        };
+        head.append(&label(&aside, &["dim", "small"]));
+        self.content.append(&head);
+        self.content.append(&label("Hold everything for", &["dim", "small"]));
+        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        chips.set_homogeneous(true);
+        chips.add_css_class("hold-chips");
+        for (text, secs) in [("30m", 1800), ("1h", 3600), ("2h", 7200), ("4h", 14400)] {
+            let b = gtk::Button::with_label(text);
+            b.set_sensitive(s.state != "off");
+            let w = Rc::downgrade(self);
+            b.connect_clicked(move |_| {
+                if let Some(d) = w.upgrade() {
+                    d.send(Request::Hold { secs });
+                    d.hide();
+                }
+            });
+            chips.append(&b);
+        }
+        self.content.append(&chips);
+        let items = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        items.add_css_class("menu-items");
+        let item = |text: &str, key: &str, enabled: bool, f: MenuAction| {
+            let b = gtk::Button::new();
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            let t = label(text, &[]);
+            t.set_hexpand(true);
+            row.append(&t);
+            row.append(&label(key, &["key-hint"]));
+            b.set_child(Some(&row));
+            b.set_sensitive(enabled);
+            let w = Rc::downgrade(self);
+            b.connect_clicked(move |_| {
+                if let Some(d) = w.upgrade() {
+                    f(&d);
+                }
+            });
+            items.append(&b);
+        };
+        let can_start = !matches!(s.state.as_str(), "saver" | "dark" | "off") && !s.locked;
+        item("Start saver now", "n", can_start, Box::new(|d| d.start_now()));
+        item("Audition hacks\u{2026}", "a", s.state != "off", Box::new(|d| d.audition(None)));
+        item("Open the drawer", "o", true, Box::new(|d| d.show(None)));
+        item(
+            if s.manual_hold { "Release your hold" } else { "Release (nothing held)" },
+            "r",
+            s.manual_hold,
+            Box::new(|d| {
+                d.send(Request::Release);
+                d.hide();
+            }),
+        );
+        self.content.append(&items);
     }
 
     fn holds_card(self: &Rc<Self>, s: &Snapshot) -> gtk::Box {
@@ -819,6 +955,7 @@ impl Drawer {
     ) {
         *self.snap.borrow_mut() = snap;
         self.shooting.set(true);
+        let menu = tab.as_deref() == Some("menu");
         let tab = match tab.as_deref() {
             Some("hacks") => Tab::Hacks,
             Some("hacks-list") => {
@@ -836,7 +973,11 @@ impl Drawer {
         // No layer surface here: give the window room for the panel.
         let width = self.cfg.borrow().drawer.width as i32 + 48;
         self.window.set_default_size(width, 980);
-        self.show(None);
+        if menu {
+            self.show_menu(None);
+        } else {
+            self.show(None);
+        }
         let d = self.clone();
         glib::timeout_add_local_once(Duration::from_millis(1200), move || {
             d.spring.settle();

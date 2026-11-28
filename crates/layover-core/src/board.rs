@@ -116,9 +116,19 @@ pub struct HistoryView {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "lowercase")]
 pub enum BoardEvent {
-    Snapshot { snapshot: Box<Snapshot> },
-    Toggle { anchor: Option<Anchor> },
-    Show { anchor: Option<Anchor> },
+    Snapshot {
+        snapshot: Box<Snapshot>,
+    },
+    Toggle {
+        anchor: Option<Anchor>,
+    },
+    Show {
+        anchor: Option<Anchor>,
+    },
+    /// The quick menu: holds, Start, Audition and the drawer, small.
+    Menu {
+        anchor: Option<Anchor>,
+    },
     Hide,
 }
 

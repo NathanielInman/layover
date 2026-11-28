@@ -162,7 +162,9 @@ bind, press Enter on the empty field and touch the key when the cue shows.
 | none | the daemon isn't running |
 
 Click it and the drawer springs out of the moon; middle-click starts the
-saver now, right-click holds for an hour.
+saver now, right-click opens a quick menu (holds of 30m to 4h, Start saver
+now, Audition, Release), and the wheel lengthens or shortens a hold by 15
+minutes. The tooltip leads with the state and why in bold.
 
 ## The drawer
 
@@ -186,6 +188,7 @@ did, with the time and why. Keys: `1` to `3`, `n` start, `h` hold, `+` and
 layover daemon                 run the idle line
 layover bar                    the waybar module
 layover toggle [--center]      open or close the drawer from the clicked moon
+layover menu [--center]        the quick menu (the lamp's right click)
 layover status                 what the idle line is doing, and why
 layover now | stop             start or stop the saver
 layover hold 1h | release      hold the line, or end the hold

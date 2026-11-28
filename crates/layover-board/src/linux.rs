@@ -103,7 +103,7 @@ pub fn main() -> glib::ExitCode {
         // must not hand itself to the first over D-Bus.
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    // `--shot <png> <snapshot.json> [now|hacks|hacks-list|sheet:<id>|history]`:
+    // `--shot <png> <snapshot.json> [now|hacks|hacks-list|sheet:<id>|history|menu]`:
     // draws the panel for
     // a saved snapshot into a PNG and exits, without a layer surface.
     let args: Vec<String> = std::env::args().collect();

@@ -31,6 +31,7 @@ Usage:
   layover bar                    the waybar module: one JSON line per change
   layover toggle [--center]      open or close the drawer from the clicked moon
   layover show [--center]        open the drawer
+  layover menu [--center]        the quick menu: holds, start, Audition (the lamp's right click)
   layover status                 what the idle line is doing, and why
   layover now                    start the saver now
   layover stop                   stop the saver
@@ -114,16 +115,16 @@ fn run(args: &[String]) -> Result<i32> {
             }
             Ok(0)
         }
-        cmd @ ("toggle" | "show") => {
+        cmd @ ("toggle" | "show" | "menu") => {
             let cfg = load_config().unwrap_or_default();
             // Ask the compositor first: the cursor is still on the icon.
             let hint = layover_core::waybar::load_layout().unwrap_or_default().hint();
             let center = rest.iter().any(|a| a == "--center");
             let anchor = bar_anchor::anchor(&cfg.bar.namespace, hint, center);
-            ask(&if cmd == "toggle" {
-                Request::Toggle { anchor }
-            } else {
-                Request::Show { anchor }
+            ask(&match cmd {
+                "toggle" => Request::Toggle { anchor },
+                "menu" => Request::Menu { anchor },
+                _ => Request::Show { anchor },
             })?;
             Ok(0)
         }
@@ -227,6 +228,10 @@ fn bar() -> Result<i32> {
             shown_off = false;
             for line in BufReader::new(s).lines() {
                 let Ok(line) = line else { break };
+                let line = match serde_json::from_str::<Lamp>(&line) {
+                    Ok(lamp) => markup(lamp).to_line(),
+                    Err(_) => line,
+                };
                 writeln!(out, "{line}")?;
                 out.flush()?;
             }
@@ -238,6 +243,17 @@ fn bar() -> Result<i32> {
         }
         std::thread::sleep(Duration::from_secs(2));
     }
+}
+
+/// Waybar shows a custom module's tooltip as Pango markup: escape it, and
+/// set the first line (the state and why) in bold.
+fn markup(mut lamp: Lamp) -> Lamp {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let mut lines = lamp.tooltip.lines();
+    let first = lines.next().map(|l| format!("<b>{}</b>", esc(l))).unwrap_or_default();
+    let rest: Vec<String> = lines.map(esc).collect();
+    lamp.tooltip = std::iter::once(first).chain(rest).collect::<Vec<_>>().join("\n");
+    lamp
 }
 
 fn check() -> Result<i32> {
@@ -447,4 +463,16 @@ fn wear_cmd(rest: &[String]) -> Result<i32> {
         .unwrap_or_default();
     cache.save(&paths::wear_cache())?;
     Ok(if failed > 0 { 1 } else { 0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tooltip_is_escaped_markup_with_the_state_in_bold() {
+        let lamp = Lamp::new("held", "Held by you for 1h more.\nmpv & <friends> keep it on".into());
+        let t = markup(lamp).tooltip;
+        assert_eq!(t, "<b>Held by you for 1h more.</b>\nmpv &amp; &lt;friends&gt; keep it on");
+    }
 }

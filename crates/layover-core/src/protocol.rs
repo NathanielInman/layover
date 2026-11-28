@@ -27,6 +27,12 @@ pub enum Request {
         #[serde(default)]
         anchor: Option<Anchor>,
     },
+    /// Open the quick menu (the lamp's right click) from `anchor`, or close
+    /// it when it is open.
+    Menu {
+        #[serde(default)]
+        anchor: Option<Anchor>,
+    },
     /// The drawer subscribes: snapshots and open/close events, one per line.
     Board,
     /// The saver subscribes: the Departure Board's rows and cheap mode, as a

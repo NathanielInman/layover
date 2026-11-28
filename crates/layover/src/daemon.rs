@@ -252,6 +252,10 @@ impl Daemon {
                         self.send_board(BoardEvent::Show { anchor });
                         None
                     }
+                    Request::Menu { anchor } => {
+                        self.send_board(BoardEvent::Menu { anchor });
+                        None
+                    }
                 };
                 if let Some(e) = event {
                     log(&format!("asked: {e:?}"));
@@ -567,6 +571,7 @@ impl Daemon {
             BoardEvent::Toggle { anchor } | BoardEvent::Show { anchor } => {
                 BoardEvent::Show { anchor }
             }
+            BoardEvent::Menu { anchor } => BoardEvent::Menu { anchor },
             _ => return,
         };
         self.pending_board = Some(serde_json::to_string(&show).expect("an event is plain data"));
