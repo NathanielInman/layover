@@ -13,7 +13,7 @@ use raw_window_handle::{
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
 };
 use smithay_client_toolkit::{
-    compositor::{CompositorHandler, CompositorState},
+    compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_registry,
     dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
@@ -21,7 +21,6 @@ use smithay_client_toolkit::{
         calloop::{
             EventLoop,
             channel::{self as cchannel, Event as ChannelEvent},
-            timer::{TimeoutAction, Timer},
         },
         calloop_wayland_source::WaylandSource,
     },
@@ -54,6 +53,18 @@ use wayland_client::{
 const GRACE: Duration = Duration::from_millis(1200);
 /// Pointer travel that counts as someone at the desk, in surface pixels.
 const NUDGE: f64 = 12.0;
+/// How long startup waits for every output's initial layer configure before
+/// beginning to draw with whichever outputs are ready.
+const STARTUP_GRACE: Duration = Duration::from_millis(200);
+/// Early wake slack so small epoll/timer jitter before a vblank window doesn't
+/// cost an extra event-loop sleep.
+const WAKE_TOLERANCE: Duration = Duration::from_micros(500);
+/// Minimum time before a missing `wl_surface.frame` callback marks an output
+/// as stalled.
+const MIN_WATCHDOG: Duration = Duration::from_millis(150);
+/// Upper bound on event-loop dispatch timeout so run_for limits and external
+/// events stay responsive.
+const MAX_DISPATCH_WAIT: Duration = Duration::from_millis(100);
 
 pub struct Options {
     pub hacks: Vec<&'static Hack>,
@@ -72,15 +83,246 @@ struct Out {
     px: [u32; 2],
 }
 
+#[derive(Clone, Debug, Default)]
+struct OutputSlot {
+    configured: bool,
+    refresh_mhz: Option<u32>,
+    frame_pending: bool,
+    last_vblank: Option<Instant>,
+    stalled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PacerState {
+    WaitingStartup { deadline: Instant },
+    WaitingVblank { presented_at: Instant, watchdog: Instant },
+    WaitingCadence { next_draw: Instant, min_vblank: Instant, max_vblank: Instant },
+    FixedFallback { next_draw: Instant },
+}
+
+#[derive(Clone, Debug)]
+struct Pacer {
+    state: PacerState,
+}
+
+fn target_interval(target_fps: u32) -> Duration {
+    Duration::from_secs_f64(1.0 / target_fps.max(1) as f64)
+}
+
+fn vblank_stride(refresh_hz: f64, target_fps: u32) -> u32 {
+    if !refresh_hz.is_finite() || refresh_hz <= 0.0 {
+        return 1;
+    }
+    let ratio = refresh_hz / target_fps.max(1) as f64;
+    // 2% clock tolerance so e.g. 60.02 Hz @ 30 fps -> stride 2,
+    // 59.951 Hz @ 30 fps -> stride 2, 59.951 Hz @ 60 fps -> stride 1,
+    // 144 Hz @ 30 fps -> stride 5 (never overshoots target_fps).
+    if ratio <= 1.02 {
+        1
+    } else if ratio - ratio.floor() <= 0.02 {
+        ratio.floor() as u32
+    } else {
+        ratio.ceil() as u32
+    }
+}
+
+fn compute_vblank_deadline(
+    min_vblank: Instant,
+    max_vblank: Instant,
+    refresh_hz: f64,
+    target_fps: u32,
+) -> Instant {
+    let vblank = Duration::from_secs_f64(1.0 / refresh_hz);
+    let stride = vblank_stride(refresh_hz, target_fps);
+    if stride <= 1 {
+        return max_vblank;
+    }
+    let spread = max_vblank.saturating_duration_since(min_vblank);
+    if spread < vblank.mul_f64(0.75) {
+        let window_start = max_vblank + vblank * (stride - 1);
+        let window_end = min_vblank + vblank * stride;
+        let width = window_end.saturating_duration_since(window_start);
+        window_start + width.mul_f64(0.25)
+    } else {
+        // Outputs drifted by roughly a full vblank or more; anchor past the
+        // latest callback so they latch onto the next shared vblank together.
+        max_vblank + vblank * (stride - 1) + vblank.mul_f64(0.25)
+    }
+}
+
+fn advance_fixed_deadline(prev: Instant, interval: Duration, now: Instant) -> Instant {
+    let mut next = prev + interval;
+    if next <= now {
+        let elapsed = now.saturating_duration_since(prev);
+        let steps = (elapsed.as_nanos() / interval.as_nanos().max(1)) + 1;
+        let steps_u32 = u32::try_from(steps).unwrap_or(u32::MAX);
+        next = prev.checked_add(interval.saturating_mul(steps_u32)).unwrap_or(now + interval);
+        while next <= now {
+            next += interval;
+        }
+    }
+    next
+}
+
+fn watchdog_duration(interval: Duration) -> Duration {
+    (interval * 2).max(MIN_WATCHDOG)
+}
+
+impl Pacer {
+    fn new(started: Instant) -> Self {
+        Pacer { state: PacerState::WaitingStartup { deadline: started + STARTUP_GRACE } }
+    }
+
+    fn reference_refresh_hz(slots: &[OutputSlot]) -> Option<f64> {
+        let active = slots
+            .iter()
+            .filter(|s| s.configured && !s.stalled)
+            .filter_map(|s| s.refresh_mhz)
+            .filter(|&r| r > 0)
+            .min();
+        let mhz = active.or_else(|| {
+            slots
+                .iter()
+                .filter(|s| s.configured)
+                .filter_map(|s| s.refresh_mhz)
+                .filter(|&r| r > 0)
+                .min()
+        })?;
+        Some(mhz as f64 / 1000.0)
+    }
+
+    fn resolve_vblank_barrier(
+        &mut self,
+        slots: &[OutputSlot],
+        presented_at: Instant,
+        target_fps: u32,
+        now: Instant,
+    ) {
+        let mut min_vblank: Option<Instant> = None;
+        let mut max_vblank: Option<Instant> = None;
+        for slot in slots {
+            if !slot.configured || slot.stalled {
+                continue;
+            }
+            if let Some(vb) = slot.last_vblank
+                && vb >= presented_at
+            {
+                min_vblank = Some(min_vblank.map_or(vb, |m| m.min(vb)));
+                max_vblank = Some(max_vblank.map_or(vb, |m| m.max(vb)));
+            }
+        }
+        if let (Some(min_vb), Some(max_vb), Some(hz)) =
+            (min_vblank, max_vblank, Self::reference_refresh_hz(slots))
+        {
+            self.state = PacerState::WaitingCadence {
+                next_draw: compute_vblank_deadline(min_vb, max_vb, hz, target_fps),
+                min_vblank: min_vb,
+                max_vblank: max_vb,
+            };
+        } else {
+            self.state = PacerState::FixedFallback {
+                next_draw: advance_fixed_deadline(presented_at, target_interval(target_fps), now),
+            };
+        }
+    }
+
+    fn on_frame_barrier(&mut self, slots: &[OutputSlot], target_fps: u32, now: Instant) {
+        let PacerState::WaitingVblank { presented_at, .. } = self.state else { return };
+        if slots.iter().any(|s| s.configured && !s.stalled && s.frame_pending) {
+            return;
+        }
+        self.resolve_vblank_barrier(slots, presented_at, target_fps, now);
+    }
+
+    fn recompute_cadence(&mut self, slots: &[OutputSlot], target_fps: u32) {
+        if let PacerState::WaitingCadence { next_draw, min_vblank, max_vblank } = &mut self.state
+            && let Some(hz) = Self::reference_refresh_hz(slots)
+        {
+            *next_draw = compute_vblank_deadline(*min_vblank, *max_vblank, hz, target_fps);
+        }
+    }
+
+    fn on_presented(
+        &mut self,
+        slots: &[OutputSlot],
+        presented_count: usize,
+        target_fps: u32,
+        now: Instant,
+    ) {
+        let prev_anchor = match self.state {
+            PacerState::FixedFallback { next_draw } => next_draw,
+            _ => now,
+        };
+        let interval = target_interval(target_fps);
+        if presented_count == 0 {
+            self.state = PacerState::FixedFallback {
+                next_draw: advance_fixed_deadline(prev_anchor, interval, now),
+            };
+        } else if slots.iter().any(|s| s.configured && !s.stalled && s.frame_pending) {
+            self.state = PacerState::WaitingVblank {
+                presented_at: now,
+                watchdog: now + watchdog_duration(interval),
+            };
+        } else {
+            self.state = PacerState::FixedFallback {
+                next_draw: advance_fixed_deadline(prev_anchor, interval, now),
+            };
+        }
+    }
+
+    fn should_draw(&mut self, slots: &mut [OutputSlot], target_fps: u32, now: Instant) -> bool {
+        match self.state {
+            PacerState::WaitingStartup { deadline } => {
+                (!slots.is_empty() && slots.iter().all(|s| s.configured))
+                    || (now >= deadline && slots.iter().any(|s| s.configured))
+            }
+            PacerState::WaitingVblank { presented_at, watchdog } => {
+                if now < watchdog {
+                    return false;
+                }
+                for slot in slots.iter_mut() {
+                    if slot.configured && slot.frame_pending {
+                        slot.stalled = true;
+                        slot.frame_pending = false;
+                    }
+                }
+                self.resolve_vblank_barrier(slots, presented_at, target_fps, now);
+                match self.state {
+                    PacerState::WaitingCadence { next_draw, .. } => {
+                        now + WAKE_TOLERANCE >= next_draw
+                    }
+                    PacerState::FixedFallback { .. } => true,
+                    PacerState::WaitingStartup { .. } | PacerState::WaitingVblank { .. } => false,
+                }
+            }
+            PacerState::WaitingCadence { next_draw, .. }
+            | PacerState::FixedFallback { next_draw } => now + WAKE_TOLERANCE >= next_draw,
+        }
+    }
+
+    fn next_wait(&self, now: Instant) -> Duration {
+        let target = match self.state {
+            PacerState::WaitingStartup { deadline } => deadline,
+            PacerState::WaitingVblank { watchdog, .. } => watchdog,
+            PacerState::WaitingCadence { next_draw, .. }
+            | PacerState::FixedFallback { next_draw } => next_draw,
+        };
+        target.saturating_duration_since(now).max(Duration::from_millis(1))
+    }
+}
+
 struct Saver {
     registry: RegistryState,
     seats: SeatState,
     outputs_state: OutputState,
     conn: Connection,
+    qh: QueueHandle<Saver>,
     instance: wgpu::Instance,
     gpu: Option<Gpu>,
     renderer: Option<Renderer>,
     outs: Vec<Out>,
+    pace: Vec<OutputSlot>,
+    pacer: Pacer,
     canvas: [f32; 2],
     origin: [i32; 2],
     care: CareSettings,
@@ -124,22 +366,26 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         LayerShell::bind(&globals, &qh).context("the compositor has no wlr-layer-shell")?;
 
     let seed = noise_seed();
+    let started = Instant::now();
     let mut state = Saver {
         registry: RegistryState::new(&globals),
         seats: SeatState::new(&globals, &qh),
         outputs_state: OutputState::new(&globals, &qh),
         conn: conn.clone(),
+        qh: qh.clone(),
         instance: gpu::instance(),
         gpu: None,
         renderer: None,
         outs: Vec::new(),
+        pace: Vec::new(),
+        pacer: Pacer::new(started),
         canvas: [1.0, 1.0],
         origin: [0, 0],
         care: CareSettings::from_config(&cfg.care),
         cfg: cfg.clone(),
         hacks: opts.hacks,
-        started: Instant::now(),
-        last_frame: Instant::now(),
+        started,
+        last_frame: started,
         t_offset: (seed % 100_000) as f32 / 100.0,
         seed: ((seed >> 20) % 1000) as f32 / 1000.0,
         pointer: None,
@@ -169,6 +415,13 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
                 info.modes.iter().find(|m| m.current).map(|m| m.dimensions).unwrap_or((1920, 1080));
             (m.0 / info.scale_factor.max(1), m.1 / info.scale_factor.max(1))
         });
+        let refresh_mhz = info
+            .modes
+            .iter()
+            .find(|m| m.current)
+            .map(|m| m.refresh_rate)
+            .filter(|&r| r > 0)
+            .map(|r| r as u32);
         let surface = compositor.create_surface(&qh);
         let layer = layer_shell.create_layer_surface(
             &qh,
@@ -192,6 +445,7 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
             format: None,
             px: [0, 0],
         });
+        state.pace.push(OutputSlot { refresh_mhz, ..Default::default() });
     }
     state.layout_canvas();
 
@@ -210,24 +464,32 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
             }
         })
         .map_err(|e| anyhow!("watching the line: {e}"))?;
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(state.interval()), |_, _, s: &mut Saver| {
-            s.draw();
-            TimeoutAction::ToDuration(s.interval())
-        })
-        .map_err(|e| anyhow!("starting the frame timer: {e}"))?;
 
     while state.exit.is_none() && state.failed.is_none() {
+        let now = Instant::now();
         if let Some(limit) = opts.run_for
-            && state.started.elapsed() >= limit
+            && now.saturating_duration_since(state.started) >= limit
         {
             state.exit = Some("time is up");
             break;
         }
-        event_loop
-            .dispatch(Some(Duration::from_millis(100)), &mut state)
-            .context("dispatching Wayland events")?;
+        if state.should_draw(now) {
+            state.draw(now);
+            if state.exit.is_some() || state.failed.is_some() {
+                break;
+            }
+        }
+        let now = Instant::now();
+        let mut timeout = state.pacer.next_wait(now).min(MAX_DISPATCH_WAIT);
+        if let Some(limit) = opts.run_for {
+            let remaining = limit.saturating_sub(now.saturating_duration_since(state.started));
+            timeout = if remaining.is_zero() {
+                Duration::ZERO
+            } else {
+                timeout.min(remaining.max(Duration::from_millis(1)))
+            };
+        }
+        event_loop.dispatch(Some(timeout), &mut state).context("dispatching Wayland events")?;
     }
     if let Some(err) = state.failed.take() {
         return Err(err);
@@ -264,10 +526,14 @@ fn clock_now() -> String {
 }
 
 impl Saver {
-    fn interval(&self) -> Duration {
+    fn target_fps(&self) -> u32 {
         let div = if self.cheap { feeds::CHEAP_FPS_DIVISOR } else { 1 };
-        let fps = (self.cfg.power.effective_fps() / div).max(1);
-        Duration::from_secs_f64(1.0 / fps as f64)
+        (self.cfg.power.effective_fps() / div).max(1)
+    }
+
+    fn should_draw(&mut self, now: Instant) -> bool {
+        let fps = self.target_fps();
+        self.pacer.should_draw(&mut self.pace, fps, now)
     }
 
     fn hack_time(&self) -> f32 {
@@ -301,6 +567,7 @@ impl Saver {
             self.cheap = update.cheap;
             eprintln!("layover saver: {}", if self.cheap { "cheap mode" } else { "full rate" });
             self.apply_cheap();
+            self.pacer.recompute_cadence(&self.pace, self.target_fps());
         }
     }
 
@@ -403,6 +670,11 @@ impl Saver {
         } else {
             caps.alpha_modes[0]
         };
+        let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            wgpu::PresentMode::Mailbox
+        } else {
+            wgpu::PresentMode::Fifo
+        };
         let px = [w * out.scale as u32, h * out.scale as u32];
         surface.configure(
             &gpu.device,
@@ -414,20 +686,20 @@ impl Saver {
                 width: px[0].max(1),
                 height: px[1].max(1),
                 desired_maximum_frame_latency: 2,
-                present_mode: wgpu::PresentMode::Fifo,
+                present_mode,
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         );
         out.format = Some(format);
         out.px = px;
+        self.pace[idx].configured = true;
         Ok(())
     }
 
-    fn draw(&mut self) {
+    fn draw(&mut self, now: Instant) {
         if self.exit.is_some() || self.failed.is_some() || self.renderer.is_none() {
             return;
         }
-        let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(1.0);
         self.last_frame = now;
         let elapsed = now.duration_since(self.started).as_secs_f32();
@@ -438,17 +710,21 @@ impl Saver {
         let phase = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
             % 86_400.0;
         let frame = Frame { hack, t: self.t_offset + elapsed, phase, dt, seed: self.seed };
-        if let Err(e) = self.draw_frame(&frame, fade) {
-            self.failed = Some(e);
+        match self.draw_frame(&frame, fade) {
+            Ok(presented) => {
+                let fps = self.target_fps();
+                self.pacer.on_presented(&self.pace, presented, fps, Instant::now());
+            }
+            Err(e) => self.failed = Some(e),
         }
     }
 
-    fn draw_frame(&mut self, frame: &Frame, fade: f32) -> Result<()> {
+    fn draw_frame(&mut self, frame: &Frame, fade: f32) -> Result<usize> {
         let gpu = self.gpu.as_ref().expect("gpu is ready");
         let renderer = self.renderer.as_mut().expect("renderer is ready");
         let mut enc = gpu.device.create_command_encoder(&Default::default());
         renderer.draw_canvas(&mut enc, frame)?;
-        let mut frames = Vec::new();
+        let mut frames = Vec::with_capacity(self.outs.len());
         for (i, out) in self.outs.iter().enumerate() {
             let (Some(surface), Some(format)) = (&out.gpu_surface, out.format) else { continue };
             let texture = match surface.get_current_texture() {
@@ -470,13 +746,18 @@ impl Saver {
                 px: out.px,
             };
             renderer.draw_output(&mut enc, i, &view, format, &place, fade)?;
-            frames.push(texture);
+            frames.push((i, texture));
         }
         gpu.queue.submit(Some(enc.finish()));
-        for f in frames {
+        let presented = frames.len();
+        for (idx, f) in frames {
+            let surface = self.outs[idx].layer.wl_surface();
+            surface.frame(&self.qh, FrameCallbackData(surface.clone()));
+            self.pace[idx].frame_pending = true;
             gpu.queue.present(f);
         }
-        Ok(())
+        let _ = self.conn.flush();
+        Ok(presented)
     }
 
     fn wake(&mut self, why: &'static str) {
@@ -503,7 +784,23 @@ impl CompositorHandler for Saver {
         _: wl_output::Transform,
     ) {
     }
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+    fn frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        let Some(idx) = self.outs.iter().position(|o| o.layer.wl_surface() == surface) else {
+            return;
+        };
+        let now = Instant::now();
+        self.pace[idx].frame_pending = false;
+        self.pace[idx].stalled = false;
+        self.pace[idx].last_vblank = Some(now);
+        let fps = self.target_fps();
+        self.pacer.on_frame_barrier(&self.pace, fps, now);
+    }
     fn surface_enter(
         &mut self,
         _: &Connection,
@@ -527,25 +824,54 @@ impl OutputHandler for Saver {
         &mut self.outputs_state
     }
     fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
+    ) {
+        let Some(idx) = self.outs.iter().position(|o| o.output == output) else { return };
+        if let Some(info) = self.outputs_state.info(&output) {
+            self.pace[idx].refresh_mhz = info
+                .modes
+                .iter()
+                .find(|m| m.current)
+                .map(|m| m.refresh_rate)
+                .filter(|&r| r > 0)
+                .map(|r| r as u32);
+            self.pacer.recompute_cadence(&self.pace, self.target_fps());
+        }
+    }
     fn output_destroyed(
         &mut self,
         _: &Connection,
         _: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
-        if let Some(o) = self.outs.iter_mut().find(|o| o.output == output) {
-            o.gpu_surface = None;
-            o.format = None;
+        if let Some(idx) = self.outs.iter().position(|o| o.output == output) {
+            self.outs[idx].gpu_surface = None;
+            self.outs[idx].format = None;
+            self.pace[idx].configured = false;
+            self.pace[idx].frame_pending = false;
+            self.pace[idx].stalled = false;
+            self.pace[idx].last_vblank = None;
+            let fps = self.target_fps();
+            self.pacer.on_frame_barrier(&self.pace, fps, Instant::now());
         }
     }
 }
 
 impl LayerShellHandler for Saver {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        if let Some(o) = self.outs.iter_mut().find(|o| &o.layer == layer) {
-            o.gpu_surface = None;
-            o.format = None;
+        if let Some(idx) = self.outs.iter().position(|o| &o.layer == layer) {
+            self.outs[idx].gpu_surface = None;
+            self.outs[idx].format = None;
+            self.pace[idx].configured = false;
+            self.pace[idx].frame_pending = false;
+            self.pace[idx].stalled = false;
+            self.pace[idx].last_vblank = None;
+            let fps = self.target_fps();
+            self.pacer.on_frame_barrier(&self.pace, fps, Instant::now());
         }
         if self.outs.iter().all(|o| o.format.is_none()) {
             self.exit = Some("the compositor closed the surfaces");
@@ -677,3 +1003,296 @@ impl ProvidesRegistryState for Saver {
 }
 
 smithay_client_toolkit::delegate_dispatch2!(Saver);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn configured_slot(refresh_mhz: Option<u32>) -> OutputSlot {
+        OutputSlot { configured: true, refresh_mhz, ..Default::default() }
+    }
+
+    #[test]
+    fn vblank_stride_snaps_near_divisors_without_overshooting() {
+        assert_eq!(vblank_stride(59.951, 30), 2);
+        assert_eq!(vblank_stride(59.951, 15), 4);
+        assert_eq!(vblank_stride(59.951, 60), 1);
+        assert_eq!(vblank_stride(60.02, 30), 2);
+        assert_eq!(vblank_stride(60.02, 60), 1);
+        assert_eq!(vblank_stride(120.0, 30), 4);
+        assert_eq!(vblank_stride(120.0, 60), 2);
+        assert_eq!(vblank_stride(144.0, 30), 5);
+        assert_eq!(vblank_stride(144.0, 60), 3);
+        assert_eq!(vblank_stride(75.0, 30), 3);
+    }
+
+    #[test]
+    fn ntsc_59_95_at_30fps_holds_exact_two_vblank_cadence() {
+        let t0 = Instant::now();
+        let vblank = Duration::from_secs_f64(1.0 / 59.951);
+        let phase_offset = Duration::from_micros(400);
+        let target_fps = 30;
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![configured_slot(Some(59_951)), configured_slot(Some(59_951))];
+
+        assert!(pacer.should_draw(&mut slots, target_fps, t0));
+        // Initial frame commits before the 2nd vblank (at k = 0 -> latches on k = 1).
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, target_fps, t0 + Duration::from_millis(3));
+
+        // Initial callbacks arrive on vblank index 1.
+        let vb1_out0 = t0 + vblank;
+        let vb1_out1 = vb1_out0 + phase_offset;
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb1_out0);
+        pacer.on_frame_barrier(&slots, target_fps, vb1_out0);
+        assert!(matches!(pacer.state, PacerState::WaitingVblank { .. }));
+
+        slots[1].frame_pending = false;
+        slots[1].last_vblank = Some(vb1_out1);
+        pacer.on_frame_barrier(&slots, target_fps, vb1_out1);
+
+        let mut base_k: u32 = 1;
+        for frame_idx in 0..600u32 {
+            let next_draw = match pacer.state {
+                PacerState::WaitingCadence { next_draw, .. } => next_draw,
+                ref other => panic!("frame {frame_idx}: expected WaitingCadence, got {other:?}"),
+            };
+            assert!(!pacer.should_draw(
+                &mut slots,
+                target_fps,
+                next_draw - Duration::from_millis(1)
+            ));
+            assert!(pacer.should_draw(&mut slots, target_fps, next_draw));
+
+            let render_latency = Duration::from_millis(2 + u64::from(frame_idx % 4));
+            let commit_at = next_draw + render_latency;
+            let prev_vblank_out1 = t0 + vblank * (base_k + 1) + phase_offset;
+            let next_vblank_out0 = t0 + vblank * (base_k + 2);
+            assert!(
+                next_draw > prev_vblank_out1 + Duration::from_millis(2),
+                "frame {frame_idx} started too close to previous vblank"
+            );
+            assert!(
+                commit_at < next_vblank_out0 - Duration::from_millis(2),
+                "frame {frame_idx} committed too close to target vblank"
+            );
+
+            for slot in &mut slots {
+                slot.frame_pending = true;
+            }
+            pacer.on_presented(&slots, 2, target_fps, commit_at);
+
+            base_k += 2;
+            let cur_out0 = t0 + vblank * base_k;
+            let cur_out1 = cur_out0 + phase_offset;
+            slots[0].frame_pending = false;
+            slots[0].last_vblank = Some(cur_out0);
+            pacer.on_frame_barrier(&slots, target_fps, cur_out0);
+            slots[1].frame_pending = false;
+            slots[1].last_vblank = Some(cur_out1);
+            pacer.on_frame_barrier(&slots, target_fps, cur_out1);
+        }
+    }
+
+    #[test]
+    fn dual_output_waits_for_both_frame_callbacks_and_handles_phase_offset() {
+        let t0 = Instant::now();
+        let vblank = Duration::from_secs_f64(1.0 / 59.951);
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![configured_slot(Some(59_951)), configured_slot(Some(59_951))];
+
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, 30, t0);
+
+        let vb0 = t0 + Duration::from_millis(16);
+        let vb1 = vb0 + Duration::from_millis(6);
+
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb0);
+        pacer.on_frame_barrier(&slots, 30, vb0);
+        assert!(matches!(pacer.state, PacerState::WaitingVblank { .. }));
+        assert!(!pacer.should_draw(&mut slots, 30, vb0 + Duration::from_millis(2)));
+
+        slots[1].frame_pending = false;
+        slots[1].last_vblank = Some(vb1);
+        pacer.on_frame_barrier(&slots, 30, vb1);
+
+        match pacer.state {
+            PacerState::WaitingCadence { next_draw, .. } => {
+                assert!(next_draw > vb1 + vblank);
+                assert!(next_draw < vb0 + vblank * 2);
+            }
+            ref other => panic!("expected WaitingCadence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dual_output_one_vblank_desync_self_heals() {
+        let t0 = Instant::now();
+        let vblank = Duration::from_secs_f64(1.0 / 59.951);
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![configured_slot(Some(59_951)), configured_slot(Some(59_951))];
+
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, 30, t0);
+
+        let vb0 = t0 + vblank;
+        let vb1 = t0 + vblank * 2;
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb0);
+        pacer.on_frame_barrier(&slots, 30, vb0);
+        slots[1].frame_pending = false;
+        slots[1].last_vblank = Some(vb1);
+        pacer.on_frame_barrier(&slots, 30, vb1);
+
+        match pacer.state {
+            PacerState::WaitingCadence { next_draw, .. } => {
+                assert!(next_draw > vb1 + vblank);
+                assert!(next_draw < vb1 + vblank * 2);
+            }
+            ref other => panic!("expected WaitingCadence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stride_one_draws_immediately_after_all_vblanks() {
+        let t0 = Instant::now();
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![configured_slot(Some(59_951)), configured_slot(Some(59_951))];
+
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, 60, t0);
+
+        let vb0 = t0 + Duration::from_millis(16);
+        let vb1 = vb0 + Duration::from_micros(300);
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb0);
+        pacer.on_frame_barrier(&slots, 60, vb0);
+        slots[1].frame_pending = false;
+        slots[1].last_vblank = Some(vb1);
+        pacer.on_frame_barrier(&slots, 60, vb1);
+
+        match pacer.state {
+            PacerState::WaitingCadence { next_draw, .. } => assert_eq!(next_draw, vb1),
+            ref other => panic!("expected WaitingCadence, got {other:?}"),
+        }
+        assert!(pacer.should_draw(&mut slots, 60, vb1));
+    }
+
+    #[test]
+    fn watchdog_marks_stalled_output_and_rejoins_when_callback_returns() {
+        let t0 = Instant::now();
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![configured_slot(Some(59_951)), configured_slot(Some(59_951))];
+
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, 30, t0);
+
+        let vb0 = t0 + Duration::from_millis(16);
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb0);
+        pacer.on_frame_barrier(&slots, 30, vb0);
+        assert!(!pacer.should_draw(&mut slots, 30, t0 + Duration::from_millis(100)));
+
+        let watchdog_at = t0 + MIN_WATCHDOG;
+        assert!(pacer.should_draw(&mut slots, 30, watchdog_at));
+        assert!(!slots[0].stalled);
+        assert!(slots[1].stalled);
+        assert!(!slots[1].frame_pending);
+
+        // Present again: stalled output 1 does not block output 0's vblank barrier.
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, 30, watchdog_at);
+        let vb0_next = watchdog_at + Duration::from_millis(17);
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb0_next);
+        pacer.on_frame_barrier(&slots, 30, vb0_next);
+        assert!(matches!(pacer.state, PacerState::WaitingCadence { .. }));
+
+        // Output 1 wakes up and delivers a frame callback, then rejoins the barrier.
+        let wake_at = watchdog_at + Duration::from_millis(35);
+        slots[1].frame_pending = false;
+        slots[1].stalled = false;
+        slots[1].last_vblank = Some(wake_at);
+        pacer.on_frame_barrier(&slots, 30, wake_at);
+
+        for slot in &mut slots {
+            slot.frame_pending = true;
+        }
+        pacer.on_presented(&slots, 2, 30, wake_at);
+        let vb0_third = wake_at + Duration::from_millis(16);
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb0_third);
+        pacer.on_frame_barrier(&slots, 30, vb0_third);
+        assert!(matches!(pacer.state, PacerState::WaitingVblank { .. }));
+    }
+
+    #[test]
+    fn fixed_fallback_does_not_drift_and_skips_overruns() {
+        let t0 = Instant::now();
+        let interval = Duration::from_nanos(33_333_333);
+        assert_eq!(
+            advance_fixed_deadline(t0, interval, t0 + Duration::from_millis(5)),
+            t0 + interval
+        );
+        assert_eq!(
+            advance_fixed_deadline(t0, interval, t0 + interval * 2 + Duration::from_millis(5)),
+            t0 + interval * 3
+        );
+    }
+
+    #[test]
+    fn startup_barrier_waits_for_all_outputs_or_grace() {
+        let t0 = Instant::now();
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![OutputSlot::default(), OutputSlot::default()];
+        assert!(!pacer.should_draw(&mut slots, 30, t0 + STARTUP_GRACE));
+
+        slots[0].configured = true;
+        assert!(!pacer.should_draw(&mut slots, 30, t0 + Duration::from_millis(100)));
+        assert!(pacer.should_draw(&mut slots, 30, t0 + STARTUP_GRACE));
+
+        slots[1].configured = true;
+        assert!(pacer.should_draw(&mut slots, 30, t0));
+    }
+
+    #[test]
+    fn cheap_mode_recomputes_pending_cadence() {
+        let t0 = Instant::now();
+        let vblank = Duration::from_secs_f64(1.0 / 59.951);
+        let mut pacer = Pacer::new(t0);
+        let mut slots = vec![configured_slot(Some(59_951))];
+        slots[0].frame_pending = true;
+        pacer.on_presented(&slots, 1, 30, t0);
+        let vb = t0 + vblank;
+        slots[0].frame_pending = false;
+        slots[0].last_vblank = Some(vb);
+        pacer.on_frame_barrier(&slots, 30, vb);
+
+        let normal_draw = match pacer.state {
+            PacerState::WaitingCadence { next_draw, .. } => next_draw,
+            ref other => panic!("expected WaitingCadence, got {other:?}"),
+        };
+        pacer.recompute_cadence(&slots, 15);
+        match pacer.state {
+            PacerState::WaitingCadence { next_draw, .. } => {
+                assert!(next_draw > normal_draw + vblank);
+                assert!(next_draw < vb + vblank * 4);
+            }
+            ref other => panic!("expected WaitingCadence, got {other:?}"),
+        }
+    }
+}
