@@ -1,20 +1,19 @@
 // Silk Flurry: silky 3D plasma ribbons and luminous smoke tendrils streaming
-// from orbiting sparks across the dark on Tier P compute particles and
-// advected Tier S feedback textures.
+// from roaming sparks across a stationary full-canvas 3D field on Tier P compute
+// particles and Tier S feedback textures.
 // After xscreensaver's Flurry (Calum Robinson, 2002; Tobias Sargeant, 2003).
 //
 // Particle buffer layout (`particles[idx]`):
-//   p.xyz = 3D position relative to cluster center (canvas heights)
+//   p.xyz = 3D world position (canvas heights: x in 0..aspect(), y in 0..1)
 //   p.w   = particle age in seconds within current ribbon cycle
-//   v.xyz = 3D velocity relative to cluster center (canvas heights/sec)
+//   v.xyz = 3D world velocity (canvas heights/sec)
 //   v.w   = particle lifetime in seconds
 //   c.rgb = birth base RGB color
 //   c.w   = packed integer `((epoch % 16384u) * 512u + (birth_gen % 512u)) + 1u`
 //           stored exact in f32 (0 = uninitialized)
 
-const DRIFT_VX: f32 = 0.145;
 const EPOCH_SECS: f32 = 30.0;
-const W_REF: f32 = 0.0068;
+const W_REF: f32 = 0.0078;
 
 struct ArchSpec {
     n_sparks: u32,
@@ -41,9 +40,121 @@ fn rotate_3d(v: vec3<f32>, yaw: f32, pitch: f32, roll: f32) -> vec3<f32> {
     return vec3<f32>(xy.x, xy.y, v2.z);
 }
 
-fn arch_spec(arch: u32, cluster_id: u32, gen: u32) -> ArchSpec {
+fn safe_norm2(v: vec2<f32>, fallback: vec2<f32>) -> vec2<f32> {
+    let l2 = dot(v, v);
+    if (l2 > 1e-10) {
+        return v * inverseSqrt(l2);
+    }
+    return fallback;
+}
+
+fn reflect_range(x: f32, lo: f32, hi: f32) -> f32 {
+    let span = max(hi - lo, 1e-4);
+    let u = (x - lo) / span;
+    let m = u - 2.0 * floor(u * 0.5);
+    let f = select(2.0 - m, m, m <= 1.0);
+    return lo + f * span;
+}
+
+fn next_iso_wp(
+    cur: vec2<f32>,
+    prev_ang: f32,
+    step_idx: u32,
+    seed_v: vec2<f32>,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+) -> vec3<f32> {
+    let r = hash22(seed_v + vec2<f32>(f32(step_idx) * 13.7, f32(step_idx) * 29.3));
+    let ang = prev_ang + (r.x - 0.5) * 2.5;
+    let step_d = mix(d_min, d_max, r.y);
+    let cand = cur + vec2<f32>(cos(ang), sin(ang)) * step_d;
+    var nxt = vec2<f32>(reflect_range(cand.x, x_lo, x_hi), reflect_range(cand.y, y_lo, y_hi));
+    if (length(nxt - cur) < d_min * 0.55) {
+        let cx = 0.5 * (x_lo + x_hi);
+        let cy = 0.5 * (y_lo + y_hi);
+        let inward = safe_norm2(
+            vec2<f32>(cx - cur.x, cy - cur.y) + vec2<f32>(cos(ang), sin(ang)) * 0.35,
+            vec2<f32>(1.0, 0.0),
+        );
+        nxt = vec2<f32>(
+            clamp(cur.x + inward.x * step_d, x_lo, x_hi),
+            clamp(cur.y + inward.y * step_d, y_lo, y_hi),
+        );
+    }
+    let dp = nxt - cur;
+    let next_ang = atan2(dp.y, dp.x);
+    return vec3<f32>(nxt, next_ang);
+}
+
+fn catmull_rom2(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, u: f32) -> vec2<f32> {
+    let u2 = u * u;
+    let u3 = u2 * u;
+    return 0.5 * (
+        (2.0 * p1)
+        + (-p0 + p2) * u
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u3
+    );
+}
+
+fn iso_waypoint_pos(
+    p1_init: vec2<f32>,
+    ang_init: f32,
+    seed_v: vec2<f32>,
+    s: f32,
+    speed: f32,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+    max_hops: u32,
+) -> vec2<f32> {
+    var p1 = p1_init;
+    let w1 = next_iso_wp(p1, ang_init, 1u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p2 = w1.xy;
+    let w2 = next_iso_wp(p2, w1.z, 2u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p3 = w2.xy;
+    var cur_ang = w2.z;
+    var p0 = p1 - (p2 - p1);
+    var t_acc = 0.0;
+
+    for (var k = 0u; k < max_hops; k = k + 1u) {
+        let seg_dur = max(length(p2 - p1) / speed, 0.35);
+        if (s <= t_acc + seg_dur || k + 1u == max_hops) {
+            let u = clamp((s - t_acc) / seg_dur, 0.0, 1.0);
+            let pos = catmull_rom2(p0, p1, p2, p3, u);
+            return vec2<f32>(
+                clamp(pos.x, x_lo - 0.05, x_hi + 0.05),
+                clamp(pos.y, y_lo - 0.04, y_hi + 0.04),
+            );
+        }
+        t_acc = t_acc + seg_dur;
+        p0 = p1;
+        p1 = p2;
+        p2 = p3;
+        let w_nxt = next_iso_wp(p2, cur_ang, k + 3u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+        p3 = w_nxt.xy;
+        cur_ang = w_nxt.z;
+    }
+    return p1;
+}
+
+fn bezel_fade(p: vec2<f32>, a: f32) -> f32 {
+    return smoothstep(0.02, 0.08, p.x)
+        * (1.0 - smoothstep(a - 0.08, a - 0.02, p.x))
+        * smoothstep(0.02, 0.08, p.y)
+        * (1.0 - smoothstep(0.92, 0.98, p.y));
+}
+
+fn arch_spec(arch: u32, gen: u32) -> ArchSpec {
     var s: ArchSpec;
-    let pal_base = (gen * 3u + cluster_id * 2u + u32(g.seed * 17.0)) % 5u;
+    let pal_base = (gen * 3u + u32(g.seed * 17.0)) % 5u;
     if (arch == 0u) {
         // Classic Starfish: 5 sparks in a pulsing harmonic star dance.
         s = ArchSpec(5u, 0u, 1.95, 1.40, 0.24, 0.64, 0.44, 0.70, 0.24, 0.052, 0.015, 0.23, 1.32);
@@ -121,20 +232,6 @@ fn flurry_palette(pal: u32, spark_id: u32, n_sparks: u32, t: f32) -> vec3<f32> {
     return vec3<f32>(0.24, 0.52, 1.00);
 }
 
-fn cluster_center(cluster_id: u32, n_clusters: u32, gen: u32, t: f32) -> vec2<f32> {
-    let a = aspect();
-    let fc = f32(cluster_id);
-    let fg = f32(gen);
-    let jx = (hash11(fc * 19.7 + fg * 31.3 + g.seed * 59.0) - 0.5) * 0.30;
-    let x0 = fract((fc + 0.5 + jx) / f32(n_clusters) + g.seed * 0.41) * a;
-    let y_base = 0.28 + 0.44 * fract(0.19 + fc * 0.43 + fg * 0.618034 + g.seed * 0.53);
-    let y_sway = 0.055 * sin(t * 0.31 + fc * 2.3 + fg * 1.1);
-    return vec2<f32>(
-        fract((x0 + DRIFT_VX * t) / a) * a,
-        clamp(y_base + y_sway, 0.24, 0.76),
-    );
-}
-
 fn cluster_angles(cluster_id: u32, gen: u32, phase: f32) -> vec3<f32> {
     let fc = f32(cluster_id);
     let fg = f32(gen);
@@ -145,18 +242,35 @@ fn cluster_angles(cluster_id: u32, gen: u32, phase: f32) -> vec3<f32> {
     return vec3<f32>(yaw, pitch, roll);
 }
 
-// Moving 3D anchor ("star" in flurry.c) so cluster centers never dwell over one spot.
-fn eval_star_pos(arch: u32, cluster_id: u32, gen: u32, phase: f32) -> vec3<f32> {
+// World-space roaming 3D anchor ("star" in flurry.c) gliding evenly across the open monitor.
+fn eval_star_world(arch: u32, cluster_id: u32, n_clusters: u32, gen: u32, phase: f32, a: f32) -> vec3<f32> {
     let fc = f32(cluster_id);
     let fg = f32(gen);
+    let x_lo = 0.24;
+    let x_hi = max(a - 0.24, 0.48);
+    let y_lo = 0.22;
+    let y_hi = 0.78;
+    let h = hash22(vec2<f32>(fc * 23.1 + fg * 47.3, g.seed * 71.0 + 3.7));
+    let seed_v = vec2<f32>(fc * 37.9 + fg * 19.3, g.seed * 89.0 + 5.1);
+    let p1 = vec2<f32>(
+        mix(x_lo, x_hi, fract((fc + 0.5) / f32(n_clusters) + (h.x - 0.5) * 0.20)),
+        mix(y_lo, y_hi, h.y),
+    );
+    let s = max(phase + 2.0, 0.0);
+    let wp = iso_waypoint_pos(
+        p1, h.x * TAU, seed_v, s, 0.24,
+        x_lo, x_hi, y_lo, y_hi,
+        0.36, 0.72, 40u,
+    );
     let ph = hash11(fc * 13.1 + fg * 29.3 + g.seed * 43.0) * TAU;
-    let w = phase * 0.85 + ph;
-    let amp = select(0.070, 0.095, arch == 1u || arch == 2u);
-    return vec3<f32>(
+    let w = s * 0.85 + ph;
+    let amp = select(0.055, 0.072, arch == 1u || arch == 2u);
+    let wobble = vec3<f32>(
         amp * cos(w * 0.91 + 0.4),
         amp * 0.80 * sin(w * 1.17 + 1.1),
         amp * 0.70 * sin(w * 0.73 - 0.5),
     );
+    return vec3<f32>(wp.x, wp.y, 0.0) + wobble;
 }
 
 fn eval_spark_pos(
@@ -164,15 +278,17 @@ fn eval_spark_pos(
     arch: u32,
     spark_id: u32,
     cluster_id: u32,
+    n_clusters: u32,
     gen: u32,
     phase: f32,
+    a: f32,
 ) -> vec3<f32> {
     let fi = f32(spark_id);
     let fn_s = max(f32(spec.n_sparks), 1.0);
     let base_a = fi * (TAU / fn_s);
     let ang_off = hash11(fi * 17.3 + f32(cluster_id) * 11.1 + f32(gen) * 7.9) * 0.8;
     let t = phase * spec.speed;
-    let star = eval_star_pos(arch, cluster_id, gen, phase);
+    let star_world = eval_star_world(arch, cluster_id, n_clusters, gen, phase, a);
     var local = vec3<f32>(0.0);
 
     if (arch == 0u) {
@@ -226,7 +342,7 @@ fn eval_spark_pos(
     }
 
     let ang = cluster_angles(cluster_id, gen, phase);
-    return star + rotate_3d(local, ang.x, ang.y, ang.z);
+    return star_world + rotate_3d(local, ang.x, ang.y, ang.z);
 }
 
 fn spark_state(
@@ -234,21 +350,23 @@ fn spark_state(
     arch: u32,
     spark_id: u32,
     cluster_id: u32,
+    n_clusters: u32,
     gen: u32,
     phase: f32,
+    a: f32,
 ) -> array<vec3<f32>, 3> {
     let eps = 0.012;
-    let star = eval_star_pos(arch, cluster_id, gen, phase);
-    let p_cur = eval_spark_pos(spec, arch, spark_id, cluster_id, gen, phase);
-    let p_m = eval_spark_pos(spec, arch, spark_id, cluster_id, gen, phase - eps);
-    let p_p = eval_spark_pos(spec, arch, spark_id, cluster_id, gen, phase + eps);
+    let star = eval_star_world(arch, cluster_id, n_clusters, gen, phase, a);
+    let p_cur = eval_spark_pos(spec, arch, spark_id, cluster_id, n_clusters, gen, phase, a);
+    let p_m = eval_spark_pos(spec, arch, spark_id, cluster_id, n_clusters, gen, phase - eps, a);
+    let p_p = eval_spark_pos(spec, arch, spark_id, cluster_id, n_clusters, gen, phase + eps, a);
     let vel = (p_p - p_m) * (0.5 / eps);
     return array<vec3<f32>, 3>(p_cur, vel, star);
 }
 
 // Smooth divergence-inspired 3D curl field so adjacent particles form silky waves.
 fn smoke_curl(pos: vec3<f32>, t: f32, amp: f32) -> vec3<f32> {
-    let q = pos * 9.0 + vec3<f32>(t * 0.52, -t * 0.40, t * 0.35);
+    let q = pos * 6.5 + vec3<f32>(t * 0.52, -t * 0.40, t * 0.35);
     return vec3<f32>(
         sin(q.y * 1.3 + cos(q.z * 1.1)),
         cos(q.z * 1.2 - sin(q.x * 1.4)),
@@ -265,11 +383,13 @@ fn integrate_smoke(
     t_mid: f32,
     dt: f32,
 ) -> array<vec3<f32>, 2> {
-    let to_star = star_pos - pos;
+    let rel = pos - star_pos;
+    let to_star = -rel;
     let d2 = dot(to_star, to_star) + 0.032;
-    let grav_acc = to_star * (spec.pull / (d2 * 8.0 + 1.0));
+    let grav_acc = to_star * (spec.pull / (d2 * 10.0 + 1.0));
     let curl_acc = smoke_curl(pos, t_mid, spec.curl_amp);
-    let swirl_acc = vec3<f32>(-pos.y, pos.x, 0.25 * (pos.x - pos.y)) * (spec.swirl * swirl_sign);
+    let swirl_att = 1.0 / (1.0 + dot(rel, rel) * 3.0);
+    let swirl_acc = vec3<f32>(-rel.y, rel.x, 0.25 * (rel.x - rel.y)) * (spec.swirl * swirl_sign * swirl_att);
     let buoy_acc = vec3<f32>(0.0, spec.buoy, 0.0);
     let acc = grav_acc + curl_acc + swirl_acc + buoy_acc;
 
@@ -288,10 +408,12 @@ fn spawn_smoke(
     strand_id: u32,
     n_strands: u32,
     cluster_id: u32,
+    n_clusters: u32,
     gen: u32,
     t_birth: f32,
+    a: f32,
 ) -> array<vec3<f32>, 3> {
-    let ss = spark_state(spec, arch, spark_id, cluster_id, gen, t_birth);
+    let ss = spark_state(spec, arch, spark_id, cluster_id, n_clusters, gen, t_birth, a);
     let s_pos = ss[0];
     let s_vel = ss[1];
     let star = ss[2];
@@ -320,9 +442,9 @@ fn spawn_smoke(
     return array<vec3<f32>, 3>(p0, v0, col);
 }
 
-fn project_smoke(cluster_cm: vec2<f32>, l: vec3<f32>) -> vec3<f32> {
-    let persp = 1.0 / (1.0 + clamp(l.z, -0.55, 1.40) * 0.42);
-    return vec3<f32>(cluster_cm + l.xy * persp, l.z);
+fn project_smoke(p3: vec3<f32>) -> vec3<f32> {
+    let scale = 1.0 / (1.0 + clamp(p3.z, -0.55, 1.20) * 0.30);
+    return vec3<f32>(p3.xy, scale);
 }
 
 fn pack_birth(epoch: u32, birth_gen: u32) -> f32 {
@@ -330,7 +452,7 @@ fn pack_birth(epoch: u32, birth_gen: u32) -> f32 {
 }
 
 fn splat_smoke_piece(
-    cluster_cm: vec2<f32>,
+    star_world: vec3<f32>,
     p_prev3: vec3<f32>,
     p_cur3: vec3<f32>,
     col: vec3<f32>,
@@ -339,6 +461,7 @@ fn splat_smoke_piece(
     env: f32,
     norm_count: f32,
     sub_scale: f32,
+    a: f32,
     draw_disc: bool,
     allow_seg: bool,
 ) {
@@ -347,15 +470,18 @@ fn splat_smoke_piece(
         return;
     }
 
-    let pr0 = project_smoke(cluster_cm, p_prev3);
-    let pr1 = project_smoke(cluster_cm, p_cur3);
-    let y_clip = smoothstep(0.02, 0.08, pr1.y) * (1.0 - smoothstep(0.92, 0.98, pr1.y));
-    let depth_fade = clamp(0.90 - pr1.z * 0.25, 0.38, 1.15);
-    let r_fade = 1.0 - smoothstep(0.46, 0.76, length(p_cur3));
+    let pr0 = project_smoke(p_prev3);
+    let pr1 = project_smoke(p_cur3);
+    if (pr1.x < 0.0 || pr1.x > a || pr1.y < 0.0 || pr1.y > 1.0) {
+        return;
+    }
+    let edge = bezel_fade(pr1.xy, a);
+    let depth_fade = clamp(0.90 - p_cur3.z * 0.25, 0.42, 1.15);
+    let r_fade = 1.0 - smoothstep(0.95, 1.55, length(p_cur3 - star_world));
 
-    // Classic Flurry ribbon envelope: smooth entry into the spark, lush silky body, graceful smoke fade-out.
+    // Classic Flurry ribbon envelope: smooth entry into the spark, lush silky body, graceful fade-out.
     let ribbon_env = smoothstep(0.0, 0.09, u) * pow(1.0 - smoothstep(0.24, 1.0, u), 1.35);
-    let w_eff = ribbon_env * env * y_clip * depth_fade * r_fade * norm_count;
+    let w_eff = ribbon_env * env * edge * depth_fade * r_fade * norm_count;
     if (w_eff <= 0.004) {
         return;
     }
@@ -365,75 +491,86 @@ fn splat_smoke_piece(
     let tint_col = mix(col, vec3<f32>(1.0, 0.98, 0.95), core_tint);
 
     let h = f32(splat_dims().y);
-    let dt_fade = max(1.0 - g.fade, 0.008);
+    let dt_rgb = max(1.0 - g.fade, 0.008);
+    let dt_core = max(1.0 - exp(-g.dt * 10.0), 0.008);
     // Unified h^2 area scaling keeps total canvas luminance equal across 72p wear tests and 540p live.
-    let unit_e = (W_REF * h) * (W_REF * h) * dt_fade * w_eff;
+    let rgb_e = (W_REF * h) * (W_REF * h) * dt_rgb * w_eff;
+    let core_e = (W_REF * h) * (W_REF * h) * dt_core * w_eff;
+    let a_mix = 0.28 + 0.60 * core_tint;
 
     if (h < 180.0) {
         // Low-resolution wear grid (`256x72`): splat continuous velocity segments across substeps.
-        let seg_e = unit_e * 1.55 * sub_scale;
+        let seg_rgb = rgb_e * 1.55 * sub_scale;
+        let seg_core = core_e * 1.55 * sub_scale * a_mix;
         if (allow_seg && length(pr1.xy - pr0.xy) > 1e-5 && length(pr1.xy - pr0.xy) <= 0.25) {
-            splat_segment(pr0.xy, pr1.xy, tint_col * seg_e, seg_e * (0.28 + 0.60 * core_tint), true);
+            splat_segment(pr0.xy, pr1.xy, tint_col * seg_rgb, seg_core, false);
         } else if (draw_disc) {
-            splat_point_wrap(pr1.xy, tint_col * seg_e, seg_e * (0.28 + 0.60 * core_tint));
+            splat_point(pr1.xy, tint_col * seg_rgb, seg_core);
         }
         return;
     }
 
     if (draw_disc) {
-        let radius = mix(0.0070, 0.0114, smoothstep(0.0, 0.80, u));
-        let disc_e = unit_e * 1.55;
+        let radius = mix(0.0070, 0.0114, smoothstep(0.0, 0.80, u)) * pr1.z;
+        let disc_rgb = rgb_e * 1.55;
+        let disc_core = core_e * 1.55 * a_mix;
         let step_d = length(pr1.xy - pr0.xy);
         if (allow_seg && step_d > 0.002 && step_d <= 0.20) {
             let n_pts = clamp(i32(ceil(step_d * h / 1.8)), 2, 6);
             let inv_n = 1.0 / f32(n_pts);
-            let rgb_pt = tint_col * (disc_e * inv_n);
-            let a_pt = disc_e * (0.28 + 0.60 * core_tint) * inv_n;
+            let rgb_pt = tint_col * (disc_rgb * inv_n);
+            let a_pt = disc_core * inv_n;
             for (var k = 0; k < n_pts; k = k + 1) {
                 let p_at = mix(pr0.xy, pr1.xy, (f32(k) + 0.5) * inv_n);
-                splat_disc(p_at, radius, rgb_pt, a_pt, true);
+                splat_disc(p_at, radius, rgb_pt, a_pt, false);
             }
         } else {
-            splat_disc(pr1.xy, radius, tint_col * disc_e, disc_e * (0.28 + 0.60 * core_tint), true);
+            splat_disc(pr1.xy, radius, tint_col * disc_rgb, disc_core, false);
         }
     }
 }
 
 fn step_particle(idx: u32, t: f32) {
     let a = aspect();
-    let n_clusters = select(3u, 2u, a < 2.4);
+    let is_narrow = a < 2.4;
+    let total = particle_count();
+    let n_active = select(total, min(6144u, total), is_narrow);
+    if (idx >= n_active) {
+        return;
+    }
+
+    let n_clusters = select(2u, 1u, is_narrow);
     let cluster_id = idx % n_clusters;
     let local_id = idx / n_clusters;
-    let local_count = max(particle_count() / n_clusters, 1u);
+    let local_count = max(n_active / n_clusters, 1u);
     let norm_count = 4096.0 / f32(local_count);
 
-    let fc = f32(cluster_id);
-    let cluster_off = (fc / f32(n_clusters) + 0.13 * hash11(fc * 19.3 + g.seed * 41.0)) * EPOCH_SECS;
-    let cycle_t = t + cluster_off;
-    let gen = u32(max(floor(cycle_t / EPOCH_SECS), 0.0));
-    let phase = cycle_t - f32(gen) * EPOCH_SECS;
+    let gen = u32(max(floor(t / EPOCH_SECS), 0.0));
+    let phase = t - f32(gen) * EPOCH_SECS;
     let u_epoch = phase / EPOCH_SECS;
     let env = smoothstep(0.0, 0.08, u_epoch) * (1.0 - smoothstep(0.90, 1.0, u_epoch));
 
-    let arch = (gen + cluster_id * 2u + u32(g.seed * 13.0)) % 5u;
-    let spec = arch_spec(arch, cluster_id, gen);
-    let cluster_cm = cluster_center(cluster_id, n_clusters, gen, t);
+    let arch = (gen + u32(g.seed * 13.0)) % 5u;
+    let spec = arch_spec(arch, gen);
     let swirl_sign = select(-1.0, 1.0, (cluster_id + gen) % 2u == 0u);
 
-    // Reserve first `spec.n_sparks` slots per cluster as luminous orbiting spark heads.
+    // Reserve first `spec.n_sparks` slots per star as luminous orbiting spark heads.
     if (local_id < spec.n_sparks) {
-        let ss = spark_state(spec, arch, local_id, cluster_id, gen, phase);
-        let pr1 = project_smoke(cluster_cm, ss[0]);
-        let y_clip = smoothstep(0.02, 0.08, pr1.y) * (1.0 - smoothstep(0.92, 0.98, pr1.y));
-        let depth_fade = clamp(0.92 - pr1.z * 0.25, 0.42, 1.15);
-        let col = flurry_palette(spec.pal_id, local_id, spec.n_sparks, phase);
-        let spark_col = mix(col, vec3<f32>(1.0, 0.98, 0.94), 0.42);
+        let ss = spark_state(spec, arch, local_id, cluster_id, n_clusters, gen, phase, a);
+        let pr1 = project_smoke(ss[0]);
+        if (pr1.x >= 0.0 && pr1.x <= a && pr1.y >= 0.0 && pr1.y <= 1.0) {
+            let edge = bezel_fade(pr1.xy, a);
+            let depth_fade = clamp(0.92 - ss[0].z * 0.25, 0.42, 1.15);
+            let col = flurry_palette(spec.pal_id, local_id, spec.n_sparks, phase);
+            let spark_col = mix(col, vec3<f32>(1.0, 0.98, 0.94), 0.42);
 
-        let h = f32(splat_dims().y);
-        let dt_fade = max(1.0 - g.fade, 0.008);
-        let rad = 0.0054;
-        let head_e = (rad * h) * (rad * h) * dt_fade * 2.10 * env * y_clip * depth_fade * norm_count;
-        splat_disc(pr1.xy, rad, spark_col * head_e, head_e * 2.2, true);
+            let h = f32(splat_dims().y);
+            let dt_rgb = max(1.0 - g.fade, 0.008);
+            let dt_core = max(1.0 - exp(-g.dt * 10.0), 0.008);
+            let rad = 0.0054 * pr1.z;
+            let base_head = (rad * h) * (rad * h) * 2.10 * env * edge * depth_fade * norm_count;
+            splat_disc(pr1.xy, rad, spark_col * (base_head * dt_rgb), base_head * dt_core * 2.2, false);
+        }
         particles[idx].c.w = pack_birth(gen, 0u);
         return;
     }
@@ -465,7 +602,7 @@ fn step_particle(idx: u32, t: f32) {
 
     if (uninit) {
         let t_birth = phase - age_now;
-        let sp = spawn_smoke(spec, arch, spark_id, strand_id, n_strands, cluster_id, gen, t_birth);
+        let sp = spawn_smoke(spec, arch, spark_id, strand_id, n_strands, cluster_id, n_clusters, gen, t_birth, a);
         var pos = sp[0];
         var vel = sp[1];
         let col = sp[2];
@@ -475,15 +612,16 @@ fn step_particle(idx: u32, t: f32) {
             let w_dt = age_now / f32(n_warm);
             for (var s = 0; s < n_warm; s = s + 1) {
                 let t_mid = t_birth + (f32(s) + 0.5) * w_dt;
-                let star_mid = eval_star_pos(arch, cluster_id, gen, t_mid);
+                let star_mid = eval_star_world(arch, cluster_id, n_clusters, gen, t_mid, a);
                 let res = integrate_smoke(pos, vel, star_mid, spec, swirl_sign, t_mid, w_dt);
                 pos = res[0];
                 vel = res[1];
             }
         }
 
+        let star_now = eval_star_world(arch, cluster_id, n_clusters, gen, phase, a);
         splat_smoke_piece(
-            cluster_cm,
+            star_now,
             pos,
             pos,
             col,
@@ -492,6 +630,7 @@ fn step_particle(idx: u32, t: f32) {
             env,
             norm_count,
             1.0,
+            a,
             true,
             false,
         );
@@ -523,14 +662,16 @@ fn step_particle(idx: u32, t: f32) {
                 strand_id,
                 n_strands,
                 cluster_id,
+                n_clusters,
                 gen,
                 t_birth,
+                a,
             );
             pos = sp[0];
             vel = sp[1];
             col = sp[2];
             if (wrapped_age > 0.001) {
-                let star_mid = eval_star_pos(arch, cluster_id, gen, t_birth + 0.5 * wrapped_age);
+                let star_mid = eval_star_world(arch, cluster_id, n_clusters, gen, t_birth + 0.5 * wrapped_age, a);
                 let res = integrate_smoke(
                     pos,
                     vel,
@@ -544,8 +685,9 @@ fn step_particle(idx: u32, t: f32) {
                 vel = res[1];
             }
             age = wrapped_age;
+            let star_end = eval_star_world(arch, cluster_id, n_clusters, gen, t_sub_end, a);
             splat_smoke_piece(
-                cluster_cm,
+                star_end,
                 sp[0],
                 pos,
                 col,
@@ -554,19 +696,21 @@ fn step_particle(idx: u32, t: f32) {
                 env,
                 norm_count,
                 sub_scale,
+                a,
                 s + 1 == n_sub,
                 wrapped_age > 0.002,
             );
         } else {
             let p_prev = pos;
             let t_mid = t_sub_end - 0.5 * h_dt;
-            let star_mid = eval_star_pos(arch, cluster_id, gen, t_mid);
+            let star_mid = eval_star_world(arch, cluster_id, n_clusters, gen, t_mid, a);
             let res = integrate_smoke(pos, vel, star_mid, spec, swirl_sign, t_mid, h_dt);
             pos = res[0];
             vel = res[1];
             age = next_age;
+            let star_end = eval_star_world(arch, cluster_id, n_clusters, gen, t_sub_end, a);
             splat_smoke_piece(
-                cluster_cm,
+                star_end,
                 p_prev,
                 pos,
                 col,
@@ -575,6 +719,7 @@ fn step_particle(idx: u32, t: f32) {
                 env,
                 norm_count,
                 sub_scale,
+                a,
                 s + 1 == n_sub,
                 true,
             );
@@ -588,16 +733,14 @@ fn step_particle(idx: u32, t: f32) {
 
 fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec4<f32> {
     let dims = splat_dims();
-    let duv = vec2<f32>(DRIFT_VX * g.dt / aspect(), 0.0);
-    let base_uv = uv - duv;
-    var prev = state_sample(base_uv);
+    var prev = state_sample(uv);
     if (dims.y >= 180) {
         let tex = state_texel();
         let blur = (
-            state_sample(base_uv + vec2<f32>(tex.x, 0.0))
-            + state_sample(base_uv - vec2<f32>(tex.x, 0.0))
-            + state_sample(base_uv + vec2<f32>(0.0, tex.y))
-            + state_sample(base_uv - vec2<f32>(0.0, tex.y))
+            state_sample(uv + vec2<f32>(tex.x, 0.0))
+            + state_sample(uv - vec2<f32>(tex.x, 0.0))
+            + state_sample(uv + vec2<f32>(0.0, tex.y))
+            + state_sample(uv - vec2<f32>(0.0, tex.y))
         ) * 0.25;
         let diff = clamp(g.dt * 12.0, 0.0, 0.38);
         prev = mix(prev, blur, diff);
