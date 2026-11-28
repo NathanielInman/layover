@@ -43,7 +43,7 @@ FONT = "JetBrains Mono, DejaVu Sans Mono, Menlo, Consolas, monospace"
 # The README's alt text says the same.
 ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
-    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil, Star Shell, Tidal Spiral, Silk Flurry, Fluid Beads, Silver Shoal, Wisp Swarm, Ribbon Trace, Cycloid Rose, Hyper Cell and the Departure Board with their average level, longest "
+    "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil, Star Shell, Tidal Spiral, Silk Flurry, Fluid Beads, Silver Shoal, Wisp Swarm, Ribbon Trace, Cycloid Rose, Hyper Cell, Phase Knot and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
     "the Now tab says Armed with the idle line drawn to scale, the saver at 15m and the lock and screens off at 1h, "
     "nothing holding it, holds of 30m to 4h, and the hacks up next with Start saver now and Skip; the Hacks tab is a "
@@ -122,6 +122,7 @@ HACK_ROWS = [
     ("Ribbon Trace", "Bouncing vector ribbons, hollow triads, twisted quads and gravity arcs fanning across the dark (after Qix by Jamie Zawinski).", "2.1%", "5s", "4.5%"),
     ("Cycloid Rose", "Nested spirograph gears, Ptolemaic epicycle linkages and twin-pen guilloche rosettes drifting across the dark (after XSpirograph by Rohit Singh and Epicycle by James Youngman).", "0.7%", "3s", "2.3%"),
     ("Hyper Cell", "Four-dimensional regular polytopes rotating and turning inside out across the dark (after Hypercube by Joe Keane and Jamie Zawinski, and Polytopes by Carsten Steger).", "1.0%", "2s", "3.1%"),
+    ("Phase Knot", "Phase-drifting Lissajous loops, beaded harmonic worms, 3D knots and twisted phase ribbons across the dark (after Lissie by Alexander Jolk and Lisa by Caleb Cullen).", "0.6%", "2s", "2.1%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
 HISTORY = [
@@ -619,13 +620,14 @@ WEAR = [
     ("ribbon-trace", "2.1%", " 5s", " 4.5%"),
     ("cycloid-rose", "0.7%", " 3s", " 2.3%"),
     ("hyper-cell", "1.0%", " 2s", " 3.1%"),
+    ("phase-knot", "0.6%", " 2s", " 2.1%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
 for i, (hack, avg, dwell, hot) in enumerate(WEAR):
-    y = ty + 18 + i * 11.6
+    y = ty + 18 + i * 11.3
     add(tx(TL, y, f"{hack:<16} average {avg:>4}  dwell {dwell}  hottest {hot:>5}", 12.5, FG))
     add(tx(TL + 57 * 7.5, y, "passes", 12.5, GO, 700))
-by = ty + 18 + len(WEAR) * 11.6 + 4
+by = ty + 18 + len(WEAR) * 11.3 + 4
 term(by, "budget: average 12%, dwell 20s, hottest 25%, each color 40%", DIM)
 term(by + 25, "$ layover hold 1h", FROST, [(HOLD, RESET)])
 term(by + 44, "Held by you for 1h more. `layover release` ends it.", DIM, [(HOLD + 0.25, RESET)])
