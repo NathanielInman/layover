@@ -46,6 +46,21 @@ elsewhere with `LAYOVER_RUNTIME_DIR`, `LAYOVER_STATE_DIR`,
 `LAYOVER_CONFIG_DIR` and `LAYOVER_CACHE_DIR`. `layover saver --hack <id>
 --for 20s` shows one hack and exits without touching the daemon.
 
+## Local install
+
+Keep this desk's installed Layover on `main`. After pushing a code or shader
+change (when `~/.local/bin/layover` exists and `free -g` has at least 16 GB
+available):
+
+1. `lowprio cargo build --release --locked`
+2. `install -Dm755 target/release/layover target/release/layover-board -t ~/.local/bin/`
+3. `systemctl --user restart layover.service && (pkill -x layover-board || true)`
+4. Verify `systemctl --user is-active layover.service` is `active` and
+   `~/.local/bin/layover hacks` matches the current workspace.
+
+Leave `layover bar` running (waybar does not auto-restart it); it reconnects
+to the restarted daemon on its own.
+
 ## Rules
 
 - Rule one is not a style preference. A hack that fails the wear test does
