@@ -168,9 +168,11 @@ saver now, right-click holds for an hour.
 
 Three tabs. **Now** shows the state and why, the idle line as you configured
 it, Start saver now and Hold or Release, and anything looser than shipped
-with what it risks. **Hacks** shows every hack with its wear numbers from
-the last `layover wear`, whether it is in the rotation, a Measure button and
-a 20 second Preview of each. **History** shows the last 50 things the line
+with what it risks. **Hacks** is a gallery of every hack with its picture
+(hover to play it), a switch to take it out of the rotation and a star to
+bring it up twice a round; click one for its sheet with its loop, how it
+changes over a few minutes, a 20 second Preview and its wear numbers against
+your budget. **History** shows the last 50 things the line
 did, with the time and why. Keys: `1` to `3`, `n` start, `h` hold, `r`
 release, Escape. It takes your waybar's font and colors.
 

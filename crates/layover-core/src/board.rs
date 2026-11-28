@@ -55,8 +55,12 @@ pub struct LooseView {
 pub struct HackView {
     pub id: String,
     pub name: String,
+    /// What it looks like, in a sentence.
     pub about: String,
-    pub in_rotation: bool,
+    /// The xscreensaver hacks it follows ("After Lavalite by Jamie
+    /// Zawinski."), or empty.
+    #[serde(default)]
+    pub credit: String,
     /// How often it comes up: the drawer's switch and star.
     pub weight: Weight,
     /// Its family for the drawer's filters: Fields, 3D, Growth, Particles,
@@ -105,6 +109,19 @@ pub fn stations(cfg: &Config) -> Vec<StationView> {
     ]
 }
 
+/// A hack's one line split into what it looks like and whom it follows:
+/// "Rings cross (after Interference by Hannu Mallat)." becomes "Rings
+/// cross." and "After Interference by Hannu Mallat.".
+pub fn split_about(about: &str) -> (String, String) {
+    match about.split_once(" (after ") {
+        Some((what, rest)) => {
+            let who = rest.trim_end_matches('.').trim_end_matches(')');
+            (format!("{what}."), format!("After {who}."))
+        }
+        None => (about.to_string(), String::new()),
+    }
+}
+
 pub fn loosened(cfg: &Config) -> Vec<LooseView> {
     cfg.loosened()
         .into_iter()
@@ -138,6 +155,21 @@ mod tests {
         let s = stations(&off);
         assert!(!s[0].on && !s[2].on);
         assert!(!s[1].on, "a lock with the dark never comes when the dark is off");
+    }
+
+    #[test]
+    fn credits_come_off_the_about_line() {
+        assert_eq!(
+            split_about("Rings cross into bands (after Interference by Hannu Mallat)."),
+            (
+                "Rings cross into bands.".to_string(),
+                "After Interference by Hannu Mallat.".to_string()
+            )
+        );
+        assert_eq!(
+            split_about("Frost curtains over black mountains."),
+            ("Frost curtains over black mountains.".to_string(), String::new())
+        );
     }
 
     #[test]

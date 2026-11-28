@@ -148,3 +148,83 @@ window.layover * { font-family: inherit; }
 .buttons button.primary:disabled { background: @lo_tile; border-color: @lo_tile_border; color: @lo_idle; }
 
 .foot { color: @lo_dim; font-size: 10.5px; }
+
+/* ---- the hacks gallery ---- */
+.chips flowboxchild { padding: 0; min-width: 0; min-height: 0; }
+button.chip {
+  background: transparent;
+  border: 1px solid @lo_tile_border;
+  border-radius: 999px;
+  box-shadow: none;
+  color: @lo_dim;
+  min-height: 0;
+  min-width: 0;
+  padding: 2px 9px;
+  font-size: 11px;
+}
+button.chip:hover { background: @lo_tile_hover; color: @lo_fg; }
+button.chip.on { background: alpha(@lo_accent, 0.16); border-color: alpha(@lo_accent, 0.45); color: @lo_fg; }
+.seg {
+  background: @lo_well;
+  border: 1px solid @lo_border;
+  border-radius: 8px;
+  padding: 2px;
+}
+.seg button {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 6px;
+  color: @lo_dim;
+  min-height: 0;
+  padding: 3px 9px;
+  font-size: 11px;
+}
+.seg button:hover { color: @lo_fg; }
+.seg button.on { background: @lo_tile_hover; color: @lo_fg; font-weight: bold; }
+.seg.wide button { padding: 6px 0; font-size: 11.5px; }
+.seg button.on.never { background: alpha(@lo_bad, 0.22); }
+.seg button.on.often { background: alpha(@lo_held, 0.2); color: @lo_held; }
+.count { font-size: 11px; }
+.small { font-size: 11px; }
+.empty-note { padding: 18px 4px; font-size: 12px; }
+.card.hack { padding: 6px; }
+.thumb { background: #000; border-radius: 7px; }
+.thumb.empty { background: @lo_well; }
+.big-thumb { border-radius: 10px; }
+.card.hack.out .thumb, .hack-line.out .thumb { opacity: 0.4; }
+.card.hack.out .hack-name, .hack-line.out .hack-name { color: @lo_dim; }
+.hack-row { padding: 0 2px 0 4px; }
+.hack-line { padding: 4px 6px; border-radius: 9px; }
+.hack-line:hover { background: @lo_tile; }
+.kind { color: @lo_dim; font-size: 10.5px; }
+.badge {
+  margin: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: alpha(@lo_well, 0.85);
+  color: @lo_accent;
+  font-size: 10px;
+  font-weight: bold;
+}
+button.star {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  min-width: 0;
+  padding: 5px;
+  border-radius: 7px;
+  color: @lo_idle;
+}
+button.star:hover { background: @lo_tile_hover; color: @lo_fg; }
+button.star:checked { color: @lo_held; background: transparent; }
+.sheet-name { font-size: 20px; font-weight: bold; }
+.meter { font-size: 11.5px; }
+.meter-name { color: @lo_fg; }
+.meter-value { color: @lo_dim; font-feature-settings: "tnum"; }
+.meter levelbar trough { min-height: 6px; background: @lo_well; border: none; border-radius: 999px; padding: 0; }
+.meter levelbar block { min-height: 6px; border-radius: 999px; border: none; }
+.meter levelbar block.filled { background: @lo_ok; }
+.meter levelbar.over block.filled { background: @lo_bad; }
+.meter levelbar block.empty { background: transparent; }

@@ -438,13 +438,16 @@ impl Daemon {
         });
         let hacks = layover_hacks::HACKS
             .iter()
-            .map(|h| HackView {
-                id: h.id.into(),
-                name: h.name.into(),
-                about: h.about.into(),
-                in_rotation: self.rotation.iter().any(|r| r.id == h.id),
-                weight: self.cfg.saver.weight(h.id),
-                kind: layover_hacks::kind(h).into(),
+            .map(|h| {
+                let (about, credit) = layover_core::board::split_about(h.about);
+                HackView {
+                    id: h.id.into(),
+                    name: h.name.into(),
+                    about,
+                    credit,
+                    weight: self.cfg.saver.weight(h.id),
+                    kind: layover_hacks::kind(h).into(),
+                }
             })
             .collect();
         let snapshot = self.model.snapshot(&clock, hack, hacks);

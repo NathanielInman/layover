@@ -13,7 +13,7 @@ use layover_core::board::{BoardEvent, Snapshot};
 use layover_core::config::Config;
 use layover_core::lamp::MOON;
 use layover_core::paths;
-use layover_core::protocol::Request;
+use layover_core::protocol::{Reply, Request};
 use layover_core::wear_cache::WearCache;
 use std::cell::{Cell, RefCell};
 use std::io::Write;
@@ -30,6 +30,10 @@ pub enum Msg {
     Measured(Result<(), String>),
     /// A line for the notice: the text and whether it is an error.
     Notice(String, bool),
+    /// `layover thumbs` wrote its index: load the new pictures.
+    ThumbsChanged,
+    /// `layover thumbs` finished, with why it failed if it did.
+    ThumbsDone(Option<String>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -55,7 +59,7 @@ const NOTICE_FOR: Duration = Duration::from_secs(4);
 /// How long `Preview` shows a hack.
 const PREVIEW: &str = "20s";
 
-fn label(text: &str, classes: &[&str]) -> gtk::Label {
+pub(crate) fn label(text: &str, classes: &[&str]) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
     for c in classes {
@@ -64,14 +68,14 @@ fn label(text: &str, classes: &[&str]) -> gtk::Label {
     l
 }
 
-fn wrapped(text: &str, classes: &[&str]) -> gtk::Label {
+pub(crate) fn wrapped(text: &str, classes: &[&str]) -> gtk::Label {
     let l = label(text, classes);
     l.set_wrap(true);
     l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     l
 }
 
-fn clear(b: &gtk::Box) {
+pub(crate) fn clear(b: &gtk::Box) {
     while let Some(c) = b.first_child() {
         b.remove(&c);
     }
@@ -93,7 +97,7 @@ fn set_state_class(w: &impl IsA<gtk::Widget>, state: &str) {
 }
 
 /// `layover` next to `layover-board`, else on PATH.
-fn layover_exe() -> std::ffi::OsString {
+pub(crate) fn layover_exe() -> std::ffi::OsString {
     std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(|d| d.join("layover")))
@@ -102,8 +106,8 @@ fn layover_exe() -> std::ffi::OsString {
         .unwrap_or_else(|| "layover".into())
 }
 
-/// Sends one request on its own thread; a missing daemon comes back as a
-/// notice.
+/// Sends one request on its own thread; a missing daemon or a refusal
+/// comes back as a notice.
 fn send_with(tx: &async_channel::Sender<Msg>, req: Request) {
     let tx = tx.clone();
     std::thread::spawn(move || {
@@ -111,37 +115,56 @@ fn send_with(tx: &async_channel::Sender<Msg>, req: Request) {
             writeln!(s, "{}", serde_json::to_string(&req).unwrap_or_default())?;
             let mut line = String::new();
             std::io::BufRead::read_line(&mut std::io::BufReader::new(s), &mut line)?;
-            Ok(())
+            Ok(line)
         });
-        if sent.is_err() {
-            let _ = tx.send_blocking(Msg::Notice("Layover's daemon isn't running.".into(), true));
+        let notice = match sent {
+            Err(_) => Some("Layover's daemon isn't running.".to_string()),
+            Ok(line) => match serde_json::from_str::<Reply>(&line) {
+                Ok(Reply::Error { error }) => Some(error),
+                _ => None,
+            },
+        };
+        if let Some(n) = notice {
+            let _ = tx.send_blocking(Msg::Notice(n, true));
         }
     });
 }
 
-fn percent(v: f32) -> String {
-    format!("{:.1}%", v * 100.0)
-}
-
 pub struct Drawer {
-    window: gtk::ApplicationWindow,
-    tx: async_channel::Sender<Msg>,
+    pub(crate) window: gtk::ApplicationWindow,
+    pub(crate) tx: async_channel::Sender<Msg>,
     stage: Stage,
     spring: Spring,
     visible: Cell<bool>,
-    snap: RefCell<Option<Snapshot>>,
-    cfg: RefCell<Config>,
+    pub(crate) snap: RefCell<Option<Snapshot>>,
+    pub(crate) cfg: RefCell<Config>,
     tab: Cell<Tab>,
     tabs: Vec<(Tab, gtk::Button)>,
     lamp: gtk::Label,
     sub: gtk::Label,
     chip: gtk::Label,
     notice: gtk::Label,
-    content: gtk::Box,
-    wear: RefCell<Option<WearCache>>,
-    measuring: Cell<bool>,
+    pub(crate) content: gtk::Box,
+    pub(crate) wear: RefCell<Option<WearCache>>,
+    pub(crate) measuring: Cell<bool>,
     message: RefCell<Option<(String, bool)>>,
     message_timer: RefCell<Option<glib::SourceId>>,
+    /// What the content was last drawn from: a render that would draw the
+    /// same thing leaves it (and its scroll, focus and hover) alone.
+    rendered: RefCell<String>,
+    pub(crate) thumbs: Rc<RefCell<crate::thumbs::Store>>,
+    /// Bumped when the thumbnails change, so a render redraws them.
+    thumbs_gen: Cell<u32>,
+    pub(crate) thumbs_started: Cell<bool>,
+    /// Drawing a screenshot with `--shot`: start nothing.
+    pub(crate) shooting: Cell<bool>,
+    pub(crate) hacks_ui: RefCell<Option<Rc<crate::hacks::HacksUi>>>,
+    pub(crate) hacks_filter: RefCell<crate::hacks::Filter>,
+    pub(crate) hacks_query: RefCell<String>,
+    /// The gallery as compact rows instead of strips.
+    pub(crate) hacks_rows: Cell<bool>,
+    /// The hack whose sheet is open.
+    pub(crate) sheet: RefCell<Option<String>>,
 }
 
 impl Drawer {
@@ -235,6 +258,16 @@ impl Drawer {
             measuring: Cell::new(false),
             message: RefCell::new(None),
             message_timer: RefCell::new(None),
+            rendered: RefCell::new(String::new()),
+            thumbs: Rc::new(RefCell::new(crate::thumbs::Store::new())),
+            thumbs_gen: Cell::new(0),
+            thumbs_started: Cell::new(false),
+            shooting: Cell::new(false),
+            hacks_ui: RefCell::new(None),
+            hacks_filter: RefCell::new(crate::hacks::Filter::All),
+            hacks_query: RefCell::new(String::new()),
+            hacks_rows: Cell::new(false),
+            sheet: RefCell::new(None),
         });
         d.connect();
         d
@@ -299,7 +332,7 @@ impl Drawer {
                 self.measuring.set(false);
                 *self.wear.borrow_mut() = WearCache::load(&paths::wear_cache());
                 match result {
-                    Ok(()) => self.flash("Measured every hack against your budget.".into(), false),
+                    Ok(()) => self.flash("Measured against your budget.".into(), false),
                     Err(e) => self.flash(e, true),
                 }
                 if self.visible.get() {
@@ -307,14 +340,26 @@ impl Drawer {
                 }
             }
             Msg::Notice(text, error) => self.flash(text, error),
+            Msg::ThumbsChanged => {
+                self.thumbs.borrow_mut().reload();
+                self.thumbs_gen.set(self.thumbs_gen.get() + 1);
+                if self.visible.get() {
+                    self.render();
+                }
+            }
+            Msg::ThumbsDone(err) => {
+                if let Some(e) = err {
+                    self.flash(e, true);
+                }
+            }
         }
     }
 
-    fn send(&self, req: Request) {
+    pub(crate) fn send(&self, req: Request) {
         send_with(&self.tx, req);
     }
 
-    fn flash(self: &Rc<Self>, text: String, error: bool) {
+    pub(crate) fn flash(self: &Rc<Self>, text: String, error: bool) {
         *self.message.borrow_mut() = Some((text, error));
         if let Some(id) = self.message_timer.borrow_mut().take() {
             id.remove();
@@ -344,7 +389,15 @@ impl Drawer {
     }
 
     fn key(self: &Rc<Self>, key: gdk::Key) -> glib::Propagation {
+        if self.tab.get() == Tab::Hacks && self.sheet_key(key) {
+            return glib::Propagation::Stop;
+        }
         match key {
+            gdk::Key::slash if self.tab.get() == Tab::Hacks => {
+                if let Some(ui) = self.hacks_ui.borrow().as_ref() {
+                    ui.search.grab_focus();
+                }
+            }
             gdk::Key::Escape => self.hide(),
             gdk::Key::_1 => self.set_tab(Tab::Now),
             gdk::Key::_2 => self.set_tab(Tab::Hacks),
@@ -395,11 +448,14 @@ impl Drawer {
     }
 
     fn set_tab(self: &Rc<Self>, tab: Tab) {
+        if tab != self.tab.get() {
+            self.sheet.replace(None);
+        }
         self.tab.set(tab);
         self.render();
     }
 
-    fn render(self: &Rc<Self>) {
+    pub(crate) fn render(self: &Rc<Self>) {
         let snap = self.snap.borrow().clone().unwrap_or_else(|| Snapshot {
             state: "off".into(),
             headline: "Not running".into(),
@@ -418,11 +474,32 @@ impl Drawer {
             }
         }
         self.render_notice();
-        clear(&self.content);
+        let key = format!(
+            "{:?}|{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
+            self.tab.get(),
+            self.sheet.borrow(),
+            self.hacks_filter.borrow(),
+            self.hacks_query.borrow(),
+            self.hacks_rows.get(),
+            self.wear.borrow().as_ref().map(|w| w.measured_at),
+            self.measuring.get(),
+            self.thumbs_gen.get(),
+            serde_json::to_string(&snap).unwrap_or_default(),
+        );
+        if *self.rendered.borrow() == key {
+            return;
+        }
+        *self.rendered.borrow_mut() = key;
         match self.tab.get() {
-            Tab::Now => self.render_now(&snap),
+            Tab::Now => {
+                clear(&self.content);
+                self.render_now(&snap)
+            }
             Tab::Hacks => self.render_hacks(&snap),
-            Tab::History => self.render_history(&snap),
+            Tab::History => {
+                clear(&self.content);
+                self.render_history(&snap)
+            }
         }
     }
 
@@ -507,103 +584,6 @@ impl Drawer {
         }
     }
 
-    fn render_hacks(self: &Rc<Self>, s: &Snapshot) {
-        let wear = self.wear.borrow().clone();
-        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let info = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        info.set_hexpand(true);
-        info.append(&label("WEAR TEST", &["t-label"]));
-        let status = match (&wear, self.measuring.get()) {
-            (_, true) => "Measuring every hack, about a minute".to_string(),
-            (Some(w), false) if w.measured_at > 0 => {
-                format!("{} min a hack, measured {}", w.minutes, local_time(w.measured_at))
-            }
-            _ => "Not measured yet".to_string(),
-        };
-        info.append(&label(&status, &["dim"]));
-        head.append(&info);
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        buttons.add_css_class("buttons");
-        buttons.set_valign(gtk::Align::Center);
-        let measure = gtk::Button::with_label("Measure");
-        measure.set_sensitive(!self.measuring.get());
-        let w = Rc::downgrade(self);
-        measure.connect_clicked(move |_| {
-            if let Some(d) = w.upgrade() {
-                d.measure();
-            }
-        });
-        buttons.append(&measure);
-        head.append(&buttons);
-        self.content.append(&head);
-
-        for h in &s.hacks {
-            let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
-            card.add_css_class("card");
-            let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            let name = label(&h.name, &["hack-name"]);
-            name.set_hexpand(true);
-            top.append(&name);
-            if s.hack.as_deref() == Some(h.name.as_str()) {
-                top.append(&label("ON SCREEN", &["showing"]));
-            }
-            let rot = label(
-                if h.in_rotation { "in rotation" } else { "off" },
-                &["rot", if h.in_rotation { "on" } else { "off" }],
-            );
-            rot.set_valign(gtk::Align::Center);
-            top.append(&rot);
-            card.append(&top);
-            card.append(&wrapped(&h.about, &["about"]));
-
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            match wear.as_ref().and_then(|w| w.row(&h.id)) {
-                Some(r) => {
-                    let numbers = label(
-                        &format!(
-                            "avg {} \u{b7} dwell {}s \u{b7} hottest {}",
-                            percent(r.average),
-                            r.max_dwell_secs,
-                            percent(r.hot_spot)
-                        ),
-                        &["wear"],
-                    );
-                    numbers.set_hexpand(true);
-                    row.append(&numbers);
-                    if r.failures.is_empty() {
-                        row.append(&label("passes", &["pass"]));
-                    } else {
-                        row.append(&label("fails", &["fail"]));
-                    }
-                }
-                None => {
-                    let none = label("not measured", &["wear", "dim"]);
-                    none.set_hexpand(true);
-                    row.append(&none);
-                }
-            }
-            let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            buttons.add_css_class("buttons");
-            let preview = gtk::Button::with_label("Preview");
-            let w = Rc::downgrade(self);
-            let id = h.id.clone();
-            preview.connect_clicked(move |_| {
-                if let Some(d) = w.upgrade() {
-                    d.preview(&id);
-                }
-            });
-            buttons.append(&preview);
-            row.append(&buttons);
-            card.append(&row);
-            if let Some(r) = wear.as_ref().and_then(|w| w.row(&h.id)) {
-                for f in &r.failures {
-                    card.append(&wrapped(f, &["why"]));
-                }
-            }
-            self.content.append(&card);
-        }
-    }
-
     fn render_history(self: &Rc<Self>, s: &Snapshot) {
         if s.history.is_empty() {
             let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
@@ -636,7 +616,7 @@ impl Drawer {
 
     /// Runs `layover wear` off the main thread; the cache it writes comes
     /// back through the file watch and `Msg::Measured`.
-    fn measure(self: &Rc<Self>) {
+    pub(crate) fn measure(self: &Rc<Self>, ids: Vec<String>) {
         if self.measuring.replace(true) {
             return;
         }
@@ -645,6 +625,7 @@ impl Drawer {
         std::thread::spawn(move || {
             let result = std::process::Command::new(layover_exe())
                 .args(["wear", "--minutes", "60"])
+                .args(&ids)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped())
@@ -662,7 +643,7 @@ impl Drawer {
     }
 
     /// Closes the drawer and shows one hack for a while.
-    fn preview(self: &Rc<Self>, id: &str) {
+    pub(crate) fn preview(self: &Rc<Self>, id: &str) {
         self.hide();
         let id = id.to_string();
         let tx = self.tx.clone();
@@ -697,8 +678,17 @@ impl Drawer {
         app: gtk::Application,
     ) {
         *self.snap.borrow_mut() = snap;
+        self.shooting.set(true);
         let tab = match tab.as_deref() {
             Some("hacks") => Tab::Hacks,
+            Some("hacks-list") => {
+                self.hacks_rows.set(true);
+                Tab::Hacks
+            }
+            Some(t) if t.starts_with("sheet:") => {
+                *self.sheet.borrow_mut() = Some(t["sheet:".len()..].to_string());
+                Tab::Hacks
+            }
             Some("history") => Tab::History,
             _ => Tab::Now,
         };

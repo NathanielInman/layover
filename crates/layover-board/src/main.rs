@@ -14,11 +14,15 @@ mod anim;
 #[cfg(target_os = "linux")]
 mod drawer;
 #[cfg(target_os = "linux")]
+mod hacks;
+#[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 mod stage;
 #[cfg(target_os = "linux")]
 mod theme;
+#[cfg(target_os = "linux")]
+mod thumbs;
 
 #[cfg(target_os = "linux")]
 fn main() -> gtk::glib::ExitCode {

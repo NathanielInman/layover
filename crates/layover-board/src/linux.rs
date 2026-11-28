@@ -103,7 +103,8 @@ pub fn main() -> glib::ExitCode {
         // must not hand itself to the first over D-Bus.
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
-    // `--shot <png> <snapshot.json> [now|hacks|history]`: draws the panel for
+    // `--shot <png> <snapshot.json> [now|hacks|hacks-list|sheet:<id>|history]`:
+    // draws the panel for
     // a saved snapshot into a PNG and exits, without a layer surface.
     let args: Vec<String> = std::env::args().collect();
     let shot = args.iter().position(|a| a == "--shot").map(|i| args[i + 1..].to_vec());
@@ -155,6 +156,13 @@ pub fn main() -> glib::ExitCode {
             let tx = tx.clone();
             watch(path, move || {
                 let _ = tx.send_blocking(Msg::Restyle);
+            });
+        }
+        {
+            let tx = tx.clone();
+            let index = layover_core::thumbs::ThumbIndex::path(&paths::thumbs_dir());
+            watch(index, move || {
+                let _ = tx.send_blocking(Msg::ThumbsChanged);
             });
         }
         std::mem::forget(app.hold());

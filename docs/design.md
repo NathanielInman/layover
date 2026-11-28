@@ -334,10 +334,20 @@ Three tabs:
   frost saver), the reason, the idle line as configured (saver, lock, screens
   off, lock screen off; an off station says off), Start saver now and Hold 1h
   or Release, and every value looser than shipped with its reason.
-- **Hacks**: each hack, whether it is in the rotation and whether it is on
-  screen, and its wear numbers from `wear.json` with passes or fails. Measure
-  runs `layover wear` in the background; Preview closes the drawer and runs
-  `layover saver --hack <id> --for 20s`.
+- **Hacks**: a gallery of every hack. Each shows its picture from
+  `layover thumbs` (its 4 second loop plays under the pointer), its family
+  (Fields, 3D, Growth, Particles, Lines or Text, from what the renderer gives
+  it), passes or fails from `wear.json`, a star (twice a round) and a switch
+  (in the rotation). A search box (`/`) and chips filter it by name, in or
+  out of the rotation, starred and family; Strips or List picks big pictures
+  or compact rows. Measure runs `layover wear` in the background. The drawer
+  runs `layover thumbs` at low priority the first time the tab opens, and
+  pictures fill in as each hack is drawn. A click on a hack opens its sheet:
+  the loop playing, frames at 0:30 and 2:30, what it looks like and whom it
+  follows, Never, Sometimes or Often with how often that comes up, Preview
+  (closes the drawer and runs `layover saver --hack <id> --for 20s`), and its
+  wear numbers as bars against your budget with the heat map. Arrows step
+  through sheets, `p` previews and Escape goes back to the gallery.
 - **History**: the last 50 transitions, newest first, each with its local
   time and why: a station reached or held (once per hold, not every retry),
   the saver started, dismissed or ended, locked, screens off and on, holds
