@@ -1,6 +1,6 @@
 // Silver Shoal: bioluminescent boid schools and darting swarms weaving, banking
-// and scattering across the dark on Tier P compute particles and advected
-// Tier S feedback textures.
+// and scattering across a stationary full-canvas 3D ocean and sky on Tier P compute
+// particles and advected Tier S feedback textures.
 // After xscreensaver's GLSchool (David C. Lambert) and Swarm (Jeff Butterworth).
 //
 // Race-free Jacobi ping-pong particle buffer (`Particles { count: 640 }`):
@@ -8,15 +8,14 @@
 //   according to `u32(round(max(g.frame, 0.0))) & 1u`.
 //
 // Particle layout (`particles[idx]`):
-//   p.xyz = 3D position relative to school center (canvas heights)
+//   p.xyz = 3D world position (canvas heights: x in 0..aspect(), y in 0..1, z depth)
 //   p.w   = banking / predator-evasion iridescence flash energy (0..1)
-//   v.xyz = 3D velocity relative to school center (canvas heights/sec)
+//   v.xyz = 3D world velocity (canvas heights/sec)
 //   v.w   = swim undulation phase (radians, wrapped modulo TAU)
 //   c.rgb = base iridescent RGB color
 //   c.w   = packed epoch `(gen % 16777215u) + 1u` stored exact in f32 (0 = uninitialized)
 
 const MAX_AGENTS: u32 = 320u;
-const DRIFT_VX: f32 = 0.145;
 const EPOCH_SECS: f32 = 34.0;
 
 struct RegimeSpec {
@@ -30,8 +29,6 @@ struct RegimeSpec {
     turn_rate: f32,
     v_min: f32,
     v_max: f32,
-    bound_xy: f32,
-    bound_z: f32,
 };
 
 fn rotate_3d(v: vec3<f32>, yaw: f32, pitch: f32, roll: f32) -> vec3<f32> {
@@ -67,37 +64,201 @@ fn clamp_len3(v: vec3<f32>, max_l: f32) -> vec3<f32> {
     return v;
 }
 
-fn regime_spec(arch: u32, is_narrow: bool) -> RegimeSpec {
-    let sx = select(1.0, 0.88, is_narrow);
+fn reflect_range(x: f32, lo: f32, hi: f32) -> f32 {
+    let span = max(hi - lo, 1e-4);
+    let u = (x - lo) / span;
+    let m = u - 2.0 * floor(u * 0.5);
+    let f = select(2.0 - m, m, m <= 1.0);
+    return lo + f * span;
+}
+
+fn next_iso_wp(
+    cur: vec2<f32>,
+    prev_ang: f32,
+    step_idx: u32,
+    seed_v: vec2<f32>,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+) -> vec3<f32> {
+    let r = hash22(seed_v + vec2<f32>(f32(step_idx) * 13.7, f32(step_idx) * 29.3));
+    let ang = prev_ang + (r.x - 0.5) * 2.5;
+    let step_d = mix(d_min, d_max, r.y);
+    let cand = cur + vec2<f32>(cos(ang), sin(ang)) * step_d;
+    var nxt = vec2<f32>(reflect_range(cand.x, x_lo, x_hi), reflect_range(cand.y, y_lo, y_hi));
+    if (length(nxt - cur) < d_min * 0.55) {
+        let cx = 0.5 * (x_lo + x_hi);
+        let cy = 0.5 * (y_lo + y_hi);
+        let inward = safe_norm2(
+            vec2<f32>(cx - cur.x, cy - cur.y) + vec2<f32>(cos(ang), sin(ang)) * 0.35,
+            vec2<f32>(1.0, 0.0),
+        );
+        nxt = vec2<f32>(
+            clamp(cur.x + inward.x * step_d, x_lo, x_hi),
+            clamp(cur.y + inward.y * step_d, y_lo, y_hi),
+        );
+    }
+    let dp = nxt - cur;
+    let next_ang = atan2(dp.y, dp.x);
+    return vec3<f32>(nxt, next_ang);
+}
+
+fn catmull_rom2(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, u: f32) -> vec2<f32> {
+    let u2 = u * u;
+    let u3 = u2 * u;
+    return 0.5 * (
+        (2.0 * p1)
+        + (-p0 + p2) * u
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u3
+    );
+}
+
+fn catmull_rom2_deriv(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, u: f32) -> vec2<f32> {
+    let u2 = u * u;
+    return 0.5 * (
+        (-p0 + p2)
+        + 2.0 * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u
+        + 3.0 * (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u2
+    );
+}
+
+fn iso_waypoint_pos(
+    p1_init: vec2<f32>,
+    ang_init: f32,
+    seed_v: vec2<f32>,
+    s: f32,
+    speed: f32,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+    max_hops: u32,
+) -> vec2<f32> {
+    var p1 = p1_init;
+    let w1 = next_iso_wp(p1, ang_init, 1u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p2 = w1.xy;
+    let w2 = next_iso_wp(p2, w1.z, 2u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p3 = w2.xy;
+    var cur_ang = w2.z;
+    var p0 = p1 - (p2 - p1);
+    var t_acc = 0.0;
+
+    for (var k = 0u; k < max_hops; k = k + 1u) {
+        let seg_dur = max(length(p2 - p1) / speed, 0.35);
+        if (s <= t_acc + seg_dur || k + 1u == max_hops) {
+            let u = clamp((s - t_acc) / seg_dur, 0.0, 1.0);
+            let pos = catmull_rom2(p0, p1, p2, p3, u);
+            return vec2<f32>(
+                clamp(pos.x, x_lo - 0.05, x_hi + 0.05),
+                clamp(pos.y, y_lo - 0.04, y_hi + 0.04),
+            );
+        }
+        t_acc = t_acc + seg_dur;
+        p0 = p1;
+        p1 = p2;
+        p2 = p3;
+        let w_nxt = next_iso_wp(p2, cur_ang, k + 3u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+        p3 = w_nxt.xy;
+        cur_ang = w_nxt.z;
+    }
+    return p1;
+}
+
+fn iso_waypoint_pos_dir(
+    p1_init: vec2<f32>,
+    ang_init: f32,
+    seed_v: vec2<f32>,
+    s: f32,
+    speed: f32,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+    max_hops: u32,
+) -> vec4<f32> {
+    var p1 = p1_init;
+    let w1 = next_iso_wp(p1, ang_init, 1u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p2 = w1.xy;
+    let w2 = next_iso_wp(p2, w1.z, 2u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p3 = w2.xy;
+    var cur_ang = w2.z;
+    var p0 = p1 - (p2 - p1);
+    var t_acc = 0.0;
+
+    for (var k = 0u; k < max_hops; k = k + 1u) {
+        let seg_dur = max(length(p2 - p1) / speed, 0.35);
+        if (s <= t_acc + seg_dur || k + 1u == max_hops) {
+            let u = clamp((s - t_acc) / seg_dur, 0.0, 1.0);
+            let pos = catmull_rom2(p0, p1, p2, p3, u);
+            let deriv = catmull_rom2_deriv(p0, p1, p2, p3, u);
+            let dir = safe_norm2(deriv, safe_norm2(p2 - p1, vec2<f32>(1.0, 0.0)));
+            return vec4<f32>(
+                clamp(pos.x, x_lo - 0.05, x_hi + 0.05),
+                clamp(pos.y, y_lo - 0.04, y_hi + 0.04),
+                dir.x,
+                dir.y,
+            );
+        }
+        t_acc = t_acc + seg_dur;
+        p0 = p1;
+        p1 = p2;
+        p2 = p3;
+        let w_nxt = next_iso_wp(p2, cur_ang, k + 3u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+        p3 = w_nxt.xy;
+        cur_ang = w_nxt.z;
+    }
+    return vec4<f32>(p1, 1.0, 0.0);
+}
+
+fn bezel_fade(p: vec2<f32>, a: f32) -> f32 {
+    return smoothstep(0.02, 0.08, p.x)
+        * (1.0 - smoothstep(a - 0.08, a - 0.02, p.x))
+        * smoothstep(0.02, 0.08, p.y)
+        * (1.0 - smoothstep(0.92, 0.98, p.y));
+}
+
+fn depth_persp(z: f32) -> f32 {
+    return 1.0 / (1.0 + clamp(z, -0.45, 0.85) * 0.45);
+}
+
+fn regime_spec(arch: u32) -> RegimeSpec {
     if (arch == 0u) {
-        // Pelagic Baitball (GLSchool + Predator): airy 3D swirl with sharp predator burst scatter.
+        // Pelagic Baitballs & Stalking Hunters
         return RegimeSpec(
-            0.105, 0.190, 0.300,
-            2.35, 1.05, 0.55, 0.72,
-            4.8, 0.40, 0.94, 0.40 * sx, 0.25,
+            0.105, 0.200, 0.300,
+            2.35, 1.05, 0.50, 0.78,
+            4.8, 0.42, 0.96,
         );
     }
     if (arch == 1u) {
-        // Reef Ribbon Current (GLSchool Stream): sinuous staggered ribbons along 3D Lissajous streams.
+        // Panoramic Reef Ribbons
         return RegimeSpec(
-            0.095, 0.175, 0.210,
-            2.10, 1.15, 0.28, 1.55,
-            4.6, 0.46, 0.90, 0.42 * sx, 0.24,
+            0.095, 0.180, 0.210,
+            2.10, 1.15, 0.26, 1.55,
+            4.8, 0.46, 0.92,
         );
     }
     if (arch == 2u) {
-        // Wasp & Firefly Swarm (XSwarm): expansive agile bees whipping around twin asynchronous queens.
+        // Open-Sky Wasp & Firefly Swarm
         return RegimeSpec(
-            0.072, 0.120, 0.140,
-            1.65, 0.22, 0.12, 2.40,
-            5.8, 0.52, 1.32, 0.44 * sx, 0.25,
+            0.074, 0.125, 0.145,
+            1.65, 0.22, 0.12, 2.35,
+            5.8, 0.52, 1.32,
         );
     }
-    // Abyssal Torus Vortex (GLSchool Mill): evenly spaced 3D vortex ring parted periodically by a hunter.
+    // Roaming Abyssal Torus Mills
     return RegimeSpec(
-        0.098, 0.145, 0.180,
-        2.25, 0.95, 0.22, 1.55,
-        4.6, 0.44, 0.92, 0.38 * sx, 0.23,
+        0.098, 0.155, 0.190,
+        2.25, 0.95, 0.22, 1.50,
+        4.6, 0.44, 0.94,
     );
 }
 
@@ -170,156 +331,193 @@ fn school_palette(pal: u32, role: u32, is_leader: bool) -> vec3<f32> {
     return vec3<f32>(0.70, 0.38, 1.00);
 }
 
-fn school_center(school_id: u32, n_schools: u32, gen: u32, t: f32) -> vec2<f32> {
-    let a = aspect();
-    let fs = f32(school_id);
+fn roam_locus(k: u32, n_foci: u32, gen: u32, phase: f32, a: f32) -> vec3<f32> {
+    let fk = f32(k);
     let fg = f32(gen);
-    let jx = (hash11(fs * 19.7 + fg * 31.3 + g.seed * 59.0) - 0.5) * 0.22;
-    let x0 = fract((fs + 0.5 + jx) / f32(n_schools) + g.seed * 0.41) * a;
-    let y_base = 0.38 + 0.24 * fract(0.21 + fs * 0.47 + fg * 0.618034 + g.seed * 0.53);
-    let y_sway = 0.055 * sin(t * 0.27 + fs * 2.1 + fg * 1.3);
-    return vec2<f32>(
-        fract((x0 + DRIFT_VX * t) / a) * a,
-        clamp(y_base + y_sway, 0.32, 0.68),
+    let h = hash22(vec2<f32>(fk * 17.3 + fg * 31.7, g.seed * 59.0 + 3.1));
+    let x0 = mix(0.32, a - 0.32, (fk + 0.5) / f32(n_foci));
+    let y0 = 0.28 + 0.44 * h.x;
+    let seed_v = vec2<f32>(fk * 41.3 + fg * 19.7 + 1.1, g.seed * 97.0 + fk * 7.3);
+    let xy = iso_waypoint_pos(
+        vec2<f32>(x0, y0),
+        h.y * TAU,
+        seed_v,
+        phase,
+        0.32,
+        0.26,
+        a - 0.26,
+        0.24,
+        0.76,
+        0.70,
+        1.40,
+        28u,
     );
+    let z = 0.14 * sin(phase * 0.46 + fk * 2.1 + fg * 1.7);
+    return vec3<f32>(xy, z);
 }
 
-fn school_camera_angles(school_id: u32, gen: u32, phase: f32) -> vec3<f32> {
-    let fs = f32(school_id);
-    let fg = f32(gen);
-    let h = hash22(vec2<f32>(fs * 17.3 + fg * 37.9, g.seed * 61.0 + 4.3));
-    let yaw = 0.32 * sin(phase * 0.09 + h.x * TAU) + (h.y - 0.5) * 0.42;
-    let pitch = 0.28 * cos(phase * 0.07 + h.y * TAU) + (h.x - 0.5) * 0.34;
-    let roll = 0.14 * sin(phase * 0.05 + h.x * 4.1);
-    return vec3<f32>(yaw, pitch, roll);
-}
-
-fn project_local(p3: vec3<f32>, school_id: u32, gen: u32, phase: f32) -> vec3<f32> {
-    let ang = school_camera_angles(school_id, gen, phase);
-    let r = rotate_3d(p3, ang.x, ang.y, ang.z);
-    let persp = 1.0 / (1.0 + clamp(r.z, -0.55, 1.25) * 0.42);
-    return vec3<f32>(r.xy * persp, r.z);
-}
-
-// Smooth 3D Lissajous figure-8 stream for Reef Ribbon Current (arch == 1u).
-fn ribbon_target(s_phase: f32, school_id: u32, gen: u32, is_narrow: bool, branch: u32) -> vec3<f32> {
-    let sx = select(1.0, 0.86, is_narrow);
-    let ph = hash11(f32(school_id) * 13.7 + f32(gen) * 29.1 + g.seed * 43.0) * TAU;
-    let w = s_phase * 0.78 + ph + f32(branch) * PI;
-    return vec3<f32>(
-        0.37 * sx * sin(w * 1.00),
-        0.22 * sin(w * 2.00 + 0.4),
-        0.16 * cos(w * 1.50 - 0.3),
-    );
-}
-
-// Agile 3D Queen / Wasp path for XSwarm (arch == 2u).
-fn wasp_target(phase: f32, wasp_id: u32, school_id: u32, gen: u32, is_narrow: bool) -> vec3<f32> {
-    let sx = select(1.0, 0.86, is_narrow);
-    let fw = f32(wasp_id);
-    let ph = hash11(f32(school_id) * 23.1 + f32(gen) * 19.7 + fw * 7.3 + g.seed * 53.0) * TAU;
-    let dir = select(-1.0, 1.0, wasp_id == 0u);
-    let w = phase * (1.22 + 0.21 * fw) * dir + ph;
-    return vec3<f32>(
-        0.38 * sx * (0.68 * cos(w) + 0.32 * sin(w * 2.15 + 0.9)),
-        0.26 * (0.66 * sin(w * 1.45 + 0.5) + 0.34 * cos(w * 2.75)),
-        0.18 * sin(w * 1.85 - 0.6),
-    );
-}
-
-// Predator stalking / lunging loop for Baitball (arch == 0u) and Mill surge (arch == 3u).
-fn predator_target(arch: u32, phase: f32, school_id: u32, gen: u32, is_narrow: bool) -> vec3<f32> {
-    let sx = select(1.0, 0.86, is_narrow);
-    let ph = hash11(f32(school_id) * 31.1 + f32(gen) * 17.9 + g.seed * 71.0) * TAU;
+fn world_predator_target(arch: u32, pred_id: u32, n_foci: u32, gen: u32, phase: f32, a: f32) -> vec3<f32> {
+    let center = roam_locus(pred_id, n_foci, gen, phase, a);
+    let ph = hash11(f32(pred_id) * 31.1 + f32(gen) * 17.9 + g.seed * 71.0) * TAU;
     let cycle = fract((phase + ph) / 7.2);
-    // Periodic dive through the heart of the school, then wide circling stalk.
     let lunge = exp(-pow((cycle - 0.5) * 6.5, 2.0));
-    let w = phase * 0.72 + ph;
-    let r = mix(0.35, 0.04, lunge);
-    let z_amp = select(0.15, 0.16, arch == 3u);
-    return vec3<f32>(
-        r * sx * cos(w),
-        r * 0.74 * sin(w * 1.3 + 0.6),
-        z_amp * sin(w * 1.9 - 0.4),
+    let w = phase * 0.74 + ph;
+    let r = mix(0.36, 0.03, lunge);
+    let z_amp = select(0.15, 0.17, arch == 3u);
+    let p = center + vec3<f32>(
+        r * cos(w),
+        r * 0.85 * sin(w * 1.25 + 0.5),
+        z_amp * sin(w * 1.8 - 0.4),
     );
+    return vec3<f32>(
+        clamp(p.x, 0.10, a - 0.10),
+        clamp(p.y, 0.10, 0.90),
+        clamp(p.z, -0.26, 0.26),
+    );
+}
+
+fn world_ribbon_state(branch: u32, n_foci: u32, gen: u32, s_time: f32, a: f32) -> array<vec3<f32>, 2> {
+    let fb = f32(branch);
+    let fg = f32(gen);
+    let h = hash22(vec2<f32>(fb * 23.7 + fg * 37.3, g.seed * 67.0 + 4.7));
+    let x0 = mix(0.28, a - 0.28, (fb + 0.5) / f32(n_foci));
+    let y0 = 0.22 + 0.56 * h.x;
+    let seed_v = vec2<f32>(fb * 53.1 + fg * 29.3 + 2.3, g.seed * 89.0 + fb * 11.7);
+    let spd_xy = 0.44;
+    let pd = iso_waypoint_pos_dir(
+        vec2<f32>(x0, y0),
+        h.y * TAU,
+        seed_v,
+        s_time,
+        spd_xy,
+        0.16,
+        a - 0.16,
+        0.16,
+        0.84,
+        0.70,
+        1.40,
+        36u,
+    );
+    let z = 0.18 * sin(s_time * 0.70 + fb * 2.1 + fg * 1.3);
+    let dz = 0.18 * 0.70 * cos(s_time * 0.70 + fb * 2.1 + fg * 1.3);
+    let pos = vec3<f32>(pd.xy, z);
+    let dir = safe_norm3(vec3<f32>(pd.zw * spd_xy, dz), vec3<f32>(1.0, 0.0, 0.0));
+    return array<vec3<f32>, 2>(pos, dir);
+}
+
+fn world_wasp_target(wasp_id: u32, n_wasps: u32, gen: u32, phase: f32, a: f32) -> vec3<f32> {
+    let fw = f32(wasp_id);
+    let fg = f32(gen);
+    let h = hash22(vec2<f32>(fw * 19.9 + fg * 27.1, g.seed * 53.0 + 6.1));
+    let x0 = mix(0.22, a - 0.22, (fw + 0.5) / f32(n_wasps));
+    let y0 = 0.20 + 0.60 * h.x;
+    let seed_v = vec2<f32>(fw * 61.7 + fg * 31.1 + 3.9, g.seed * 83.0 + fw * 13.1);
+    let xy = iso_waypoint_pos(
+        vec2<f32>(x0, y0),
+        h.y * TAU,
+        seed_v,
+        phase,
+        0.76,
+        0.14,
+        a - 0.14,
+        0.14,
+        0.86,
+        0.75,
+        1.45,
+        42u,
+    );
+    let z = 0.20 * sin(phase * 1.35 + fw * 1.9 + fg * 1.5);
+    return vec3<f32>(xy, z);
 }
 
 fn spawn_agent(
     arch: u32,
     pal_id: u32,
     spec: RegimeSpec,
-    school_id: u32,
-    local_id: u32,
-    agents_per: u32,
+    agent_id: u32,
+    n_active: u32,
+    n_foci: u32,
+    n_wasps: u32,
     gen: u32,
-    is_narrow: bool,
+    phase: f32,
+    a: f32,
 ) -> Particle {
-    let fl = f32(local_id);
-    let fs = f32(school_id);
+    let fi = f32(agent_id);
     let fg = f32(gen);
-    let h0 = hash22(vec2<f32>(fl * 1.93 + fs * 17.3, fg * 31.7 + g.seed * 67.0));
-    let h1 = hash22(vec2<f32>(fl * 3.11 + fg * 23.9, fs * 41.7 + g.seed * 53.0));
+    let h0 = hash22(vec2<f32>(fi * 1.93 + fg * 17.3, fg * 31.7 + g.seed * 67.0));
+    let h1 = hash22(vec2<f32>(fi * 3.11 + fg * 23.9, fg * 41.7 + g.seed * 53.0));
 
-    let is_pred = (arch == 0u || arch == 3u) && local_id == 0u;
-    let is_wasp = (arch == 2u) && (local_id < 2u);
+    let is_pred = (arch == 0u || arch == 3u) && agent_id < n_foci;
+    let is_wasp = (arch == 2u) && agent_id < n_wasps;
     let is_leader = is_pred || is_wasp;
 
     var pos = vec3<f32>(0.0);
     var vel = vec3<f32>(0.0);
-    let u = (fl + 0.5) / max(f32(agents_per), 1.0);
-    let ang = fl * 2.3999632 + h0.x * 0.6 + fs * 1.9;
+    let u = (fi + 0.5) / max(f32(n_active), 1.0);
+    let ang = fi * 2.3999632 + h0.x * 0.6;
 
     if (is_pred) {
-        pos = predator_target(arch, 0.0, school_id, gen, is_narrow);
-        vel = safe_norm3(predator_target(arch, 0.05, school_id, gen, is_narrow) - pos, vec3<f32>(1.0, 0.0, 0.0)) * 0.70;
+        pos = world_predator_target(arch, agent_id, n_foci, gen, phase, a);
+        let p_next = world_predator_target(arch, agent_id, n_foci, gen, phase + 0.08, a);
+        vel = safe_norm3(p_next - pos, vec3<f32>(1.0, 0.0, 0.0)) * 0.72;
     } else if (is_wasp) {
-        pos = wasp_target(0.0, local_id, school_id, gen, is_narrow);
-        vel = safe_norm3(wasp_target(0.05, local_id, school_id, gen, is_narrow) - pos, vec3<f32>(0.0, 1.0, 0.0)) * 1.05;
+        pos = world_wasp_target(agent_id, n_wasps, gen, phase, a);
+        let p_next = world_wasp_target(agent_id, n_wasps, gen, phase + 0.06, a);
+        vel = safe_norm3(p_next - pos, vec3<f32>(0.0, 1.0, 0.0)) * 1.05;
     } else if (arch == 3u) {
-        // Torus mill evenly spaced around the 3D ring.
-        let ring_a = u * TAU + fs * 0.7;
-        let ring_r = 0.21 + 0.055 * (h0.x - 0.5);
-        pos = vec3<f32>(
-            ring_r * cos(ring_a),
-            ring_r * sin(ring_a) * 0.85,
-            0.055 * (h0.y - 0.5),
-        );
-        vel = normalize(vec3<f32>(-sin(ring_a), cos(ring_a), 0.12 * (h1.x - 0.5))) * 0.64;
+        // 1:1 circular 3D torus mills centered on roaming loci.
+        let k = agent_id % n_foci;
+        let center = roam_locus(k, n_foci, gen, phase, a);
+        let tilt = 0.30 * sin(phase * 0.18 + f32(k));
+        let ring_a = u * TAU + f32(k) * 0.9;
+        let ring_r = 0.22 + 0.055 * (h0.x - 0.5);
+        let local_p = vec3<f32>(ring_r * cos(ring_a), ring_r * sin(ring_a), 0.055 * (h0.y - 0.5));
+        let local_v = normalize(vec3<f32>(-sin(ring_a), cos(ring_a), 0.12 * (h1.x - 0.5))) * 0.64;
+        pos = center + rotate_3d(local_p, -tilt, -tilt * 0.6, 0.0);
+        vel = rotate_3d(local_v, -tilt, -tilt * 0.6, 0.0);
     } else if (arch == 1u) {
-        // Staggered along twin sinuous 3D ribbon curves across the whole cycle.
-        let branch = local_id % 2u;
-        let stream_t = (1.0 - u) * 7.6;
-        let p_a = ribbon_target(stream_t, school_id, gen, is_narrow, branch);
-        let p_b = ribbon_target(stream_t + 0.12, school_id, gen, is_narrow, branch);
-        let lat_off = vec3<f32>(h0.x - 0.5, h0.y - 0.5, h1.x - 0.5) * 0.11;
-        pos = p_a + lat_off;
-        vel = safe_norm3(p_b - p_a, vec3<f32>(1.0, 0.0, 0.0)) * 0.64;
+        // Staggered along panoramic equal-speed 3D reef ribbon curves.
+        let branch = agent_id % n_foci;
+        let s_cur = max(phase + 9.0 - (1.0 - u) * 8.4, 0.1);
+        let st_r = world_ribbon_state(branch, n_foci, gen, s_cur, a);
+        let lat_off = vec3<f32>(h0.x - 0.5, h0.y - 0.5, h1.x - 0.5) * 0.12;
+        pos = st_r[0] + lat_off;
+        vel = st_r[1] * 0.64;
     } else if (arch == 2u) {
-        // Expansive cloud around the twin wasp trajectories.
-        let wid = local_id % 2u;
-        let center_w = wasp_target(0.0, wid, school_id, gen, is_narrow);
-        let rr = 0.08 + pow(u, 0.6) * 0.24;
+        // Airy 3D clouds around each roaming queen wasp.
+        let wid = agent_id % n_wasps;
+        let center_w = world_wasp_target(wid, n_wasps, gen, phase, a);
+        let rr = 0.08 + pow(fract(u * f32(n_wasps) + h0.x * 0.2), 0.6) * 0.22;
         let phi = acos(clamp(1.0 - 2.0 * h0.y, -0.98, 0.98));
-        pos = center_w * 0.55 + vec3<f32>(
+        pos = center_w + vec3<f32>(
             rr * sin(phi) * cos(ang),
-            rr * sin(phi) * sin(ang) * 0.80,
-            rr * cos(phi) * 0.65,
+            rr * sin(phi) * sin(ang),
+            rr * cos(phi) * 0.70,
         );
         vel = safe_norm3(vec3<f32>(-sin(ang), cos(ang), h1.x - 0.5), vec3<f32>(1.0, 0.0, 0.0)) * 0.82;
     } else {
-        // Spherical Fibonacci / golden-spiral school cloud with airy spacing.
-        let rr = 0.06 + pow(u, 0.45) * 0.29;
+        // Pelagic 3D baitballs around roaming loci.
+        let k = agent_id % n_foci;
+        let center = roam_locus(k, n_foci, gen, phase, a);
+        let rr = 0.09 + pow(fract(u * f32(n_foci) + h0.x * 0.2), 0.5) * 0.22;
         let phi = acos(clamp(1.0 - 2.0 * h0.y, -0.98, 0.98));
-        pos = vec3<f32>(
+        let rel = vec3<f32>(
             rr * sin(phi) * cos(ang),
-            rr * sin(phi) * sin(ang) * 0.80,
-            rr * cos(phi) * 0.65,
+            rr * sin(phi) * sin(ang),
+            rr * cos(phi) * 0.70,
         );
-        let tang = safe_norm3(vec3<f32>(-pos.y, pos.x, 0.22 * (h1.x - 0.5)), vec3<f32>(1.0, 0.0, 0.0));
+        pos = center + rel;
+        let tang = safe_norm3(vec3<f32>(-rel.y, rel.x, 0.22 * (h1.x - 0.5)), vec3<f32>(1.0, 0.0, 0.0));
         vel = tang * mix(spec.v_min, spec.v_max * 0.78, h1.y);
     }
 
-    let role = local_id % 4u;
+    pos = vec3<f32>(
+        clamp(pos.x, 0.06, a - 0.06),
+        clamp(pos.y, 0.07, 0.93),
+        clamp(pos.z, -0.28, 0.28),
+    );
+
+    let role = agent_id % 4u;
     let col = school_palette(pal_id, role, is_leader);
     let swim_phase = fract(h0.x + h1.y) * TAU;
     let packed_gen = f32((gen % 16777215u) + 1u);
@@ -333,7 +531,6 @@ fn spawn_agent(
 
 // Rasterize an undulating 3D fish silhouette into `splat_buf` with energy-conserving AA.
 fn splat_fish(
-    school_cm: vec2<f32>,
     p_cur3: vec3<f32>,
     p_prev3: vec3<f32>,
     v3: vec3<f32>,
@@ -341,34 +538,28 @@ fn splat_fish(
     swim_phase: f32,
     flash: f32,
     is_pred: bool,
-    school_id: u32,
-    gen: u32,
-    phase: f32,
     env: f32,
-    wrap_a: f32,
+    a: f32,
 ) {
     if (env <= 0.003) {
         return;
     }
-    let proj_c = project_local(p_cur3, school_id, gen, phase);
-    let world_c = school_cm + proj_c.xy;
-    let y_clip = smoothstep(0.04, 0.09, world_c.y) * (1.0 - smoothstep(0.91, 0.96, world_c.y));
-    let alpha_env = env * y_clip;
+    let world_c = p_cur3.xy;
+    let alpha_env = env * bezel_fade(world_c, a);
     if (alpha_env <= 0.003) {
         return;
     }
 
-    let proj_tip = project_local(p_cur3 + safe_norm3(v3, vec3<f32>(1.0, 0.0, 0.0)) * 0.04, school_id, gen, phase);
-    let d_proj = proj_tip.xy - proj_c.xy;
-    let fwd = safe_norm2(d_proj, vec2<f32>(1.0, 0.0));
+    let v_dir = safe_norm3(v3, vec3<f32>(1.0, 0.0, 0.0));
+    let fwd = safe_norm2(v_dir.xy, vec2<f32>(1.0, 0.0));
     let right = vec2<f32>(-fwd.y, fwd.x);
-    let persp = 1.0 / (1.0 + clamp(proj_c.z, -0.55, 1.25) * 0.42);
-    let fshort = clamp(length(d_proj) / (0.04 * persp), 0.42, 1.0);
+    let persp = depth_persp(p_cur3.z);
+    let fshort = clamp(length(v_dir.xy), 0.42, 1.0);
 
-    // Sleek fusiform dimensions in canvas heights.
+    // Sleek fusiform dimensions in canvas heights (1:1 isotropic).
     let base_len = select(0.062, 0.096, is_pred) * persp * mix(0.56, 1.0, fshort);
     let base_hw = select(0.0108, 0.0168, is_pred) * persp;
-    let w_d = clamp(1.14 - proj_c.z * 0.46, 0.48, 1.32);
+    let w_d = clamp(1.14 - p_cur3.z * 0.46, 0.48, 1.32);
 
     let dims = splat_dims();
     let h = f32(dims.y);
@@ -378,21 +569,20 @@ fn splat_fish(
     let energy = clamp(hw_px / hw_eff, 0.30, 1.0);
 
     // Slipstream wake bridge across rapid motion steps.
-    let proj_p = project_local(p_prev3, school_id, gen, phase);
-    let world_p = school_cm + proj_p.xy;
+    let world_p = p_prev3.xy;
     let step_d = length(world_c - world_p);
     if (step_d > base_len * 0.45 && step_d < 0.28) {
         let wake_col = col * (0.24 * w_d * alpha_env);
         splat_segment(
-            vec2<f32>(fract(world_p.x / wrap_a) * wrap_a, world_p.y),
-            vec2<f32>(fract(world_c.x / wrap_a) * wrap_a, world_c.y),
+            world_p,
+            world_c,
             wake_col,
             0.14 * w_d * alpha_env,
-            true,
+            false,
         );
     }
 
-    let center_uv = state_uv(vec2<f32>(fract(world_c.x / wrap_a) * wrap_a, world_c.y));
+    let center_uv = state_uv(world_c);
     let center_px = center_uv * vec2<f32>(dims) - 0.5;
     let max_rad = select(24, 32, is_pred);
     let rad_x = clamp(i32(ceil(abs(fwd.x) * len_px * 0.62 + abs(right.x) * hw_eff * 2.2 + 1.5)), 1, max_rad);
@@ -411,6 +601,9 @@ fn splat_fish(
         let rel_y = center_px.y - f32(cy);
         for (var dx = -rad_x; dx <= rad_x; dx = dx + 1) {
             let cx = base.x + dx;
+            if (cx < 0 || cx >= dims.x) {
+                continue;
+            }
             let rel = vec2<f32>(f32(cx) - center_px.x, rel_y);
 
             // Project pixel into fish body coordinates: u along spine (+0.45 nose to -0.55 tail), v lateral.
@@ -426,17 +619,14 @@ fn splat_fish(
             var w_prof = 0.0;
             var is_fin = false;
             if (s < 0.74) {
-                // Smooth teardrop body: fuller near shoulder (s ~ 0.22), tapering to narrow peduncle.
                 let k_nose = smoothstep(0.0, 0.22, s);
                 let k_tail = pow(clamp(1.0 - max(s - 0.20, 0.0) / 0.58, 0.0, 1.0), 0.76);
                 w_prof = hw_eff * (0.16 + 0.90 * k_nose * k_tail);
-                // Swept pectoral fins on the predator near s = 0.28.
                 if (is_pred && s > 0.22 && s < 0.44) {
                     let fin_u = (s - 0.22) / 0.22;
                     w_prof = max(w_prof, hw_eff * (0.85 + 1.05 * sin(fin_u * PI) * fin_u));
                 }
             } else {
-                // Forked caudal tail fin flaring toward s = 1.0, crisply notched along the centerline.
                 let tf = (s - 0.74) / 0.26;
                 let outer = hw_eff * mix(0.24, 1.05, tf);
                 let notch = hw_eff * max(tf - 0.22, 0.0) * 0.64;
@@ -464,79 +654,66 @@ fn splat_fish(
 
             var shaded = col * (0.36 + 0.48 * nz + 0.74 * fres) * fin_tint
                 + irid_col * ((0.24 + 0.66 * flash) * lateral_line + 0.34 * fres);
-            // Bright luminous eye / head glint near the nose.
             let nose_glow = exp(-pow((s - 0.13) * 9.5, 2.0)) * nz;
             shaded = shaded + mix(col, vec3<f32>(1.0, 0.98, 0.92), 0.68) * (nose_glow * (0.44 + 0.34 * flash));
             shaded = clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.50));
 
-            let wx = ((cx % dims.x) + dims.x) % dims.x;
             let w_splat = cov * w_d;
-            splat_pixel(vec2<i32>(wx, cy), vec4<f32>(shaded * w_splat, w_splat));
+            splat_pixel(vec2<i32>(cx, cy), vec4<f32>(shaded * w_splat, w_splat));
         }
     }
 }
 
 // Rasterize a sleek darting wasp/firefly streak into `splat_buf` for XSwarm (arch == 2u).
 fn splat_swarm(
-    school_cm: vec2<f32>,
     p_cur3: vec3<f32>,
     p_prev3: vec3<f32>,
     v3: vec3<f32>,
     col: vec3<f32>,
     flash: f32,
     is_wasp: bool,
-    school_id: u32,
-    gen: u32,
-    phase: f32,
     env: f32,
-    wrap_a: f32,
+    a: f32,
 ) {
     if (env <= 0.003) {
         return;
     }
-    let proj_c = project_local(p_cur3, school_id, gen, phase);
-    let world_c = school_cm + proj_c.xy;
-    let y_clip = smoothstep(0.04, 0.09, world_c.y) * (1.0 - smoothstep(0.91, 0.96, world_c.y));
-    let alpha_env = env * y_clip;
+    let world_c = p_cur3.xy;
+    let alpha_env = env * bezel_fade(world_c, a);
     if (alpha_env <= 0.003) {
         return;
     }
 
     let spd = length(v3);
     let v_dir = safe_norm3(v3, vec3<f32>(1.0, 0.0, 0.0));
-    let proj_tail = project_local(p_cur3 - v_dir * clamp(spd * 0.075, 0.032, 0.105), school_id, gen, phase);
-    let world_tail = school_cm + proj_tail.xy;
-    let w_d = clamp(1.18 - proj_c.z * 0.42, 0.52, 1.38);
+    let tail_len = clamp(spd * 0.075, 0.032, 0.105) * depth_persp(p_cur3.z);
+    let tail_w = world_c - v_dir.xy * tail_len;
+    let w_d = clamp(1.18 - p_cur3.z * 0.42, 0.52, 1.38);
 
-    let head_w = vec2<f32>(fract(world_c.x / wrap_a) * wrap_a, world_c.y);
-    let tail_w = vec2<f32>(fract(world_tail.x / wrap_a) * wrap_a, world_tail.y);
     let dims = splat_dims();
     let h = f32(dims.y);
 
     if (is_wasp) {
-        // Vivid luminous wasp head + glowing corona + brisk tapered ribbon wake.
         let wasp_col = mix(col, vec3<f32>(1.0, 0.97, 0.92), 0.50);
-        let rad = 0.0108;
+        let rad = 0.0115;
         let area_scale = max(rad * h, 0.85);
-        let e = area_scale * area_scale * 0.52 * w_d * alpha_env;
-        splat_disc(head_w, rad, wasp_col * e, e * 1.65, true);
-        splat_segment(tail_w, head_w, col * (0.95 * w_d * alpha_env), 0.32 * w_d * alpha_env, true);
+        let e = area_scale * area_scale * 0.58 * w_d * alpha_env;
+        splat_disc(world_c, rad, wasp_col * e, e * 1.65, false);
+        splat_segment(tail_w, world_c, col * (1.05 * w_d * alpha_env), 0.35 * w_d * alpha_env, false);
     } else {
-        // Crisp firefly / bee darting streak with bright glowing pinhead core.
         let head_col = mix(col, vec3<f32>(1.0, 0.98, 0.92), 0.36 + 0.36 * flash);
-        let rad = 0.0056;
+        let rad = 0.0066;
         let area_scale = max(rad * h, 0.72);
-        let e = area_scale * area_scale * 0.40 * w_d * alpha_env;
-        splat_disc(head_w, rad, head_col * e, e * 1.65, true);
+        let e = area_scale * area_scale * 0.48 * w_d * alpha_env;
+        splat_disc(world_c, rad, head_col * e, e * 1.65, false);
 
-        let proj_p = project_local(p_prev3, school_id, gen, phase);
-        let world_p = school_cm + proj_p.xy;
+        let world_p = p_prev3.xy;
         let seg_start = select(
             tail_w,
-            vec2<f32>(fract(world_p.x / wrap_a) * wrap_a, world_p.y),
-            length(world_c - world_p) > length(world_c - world_tail) && length(world_c - world_p) < 0.28,
+            world_p,
+            length(world_c - world_p) > length(world_c - tail_w) && length(world_c - world_p) < 0.28,
         );
-        splat_segment(seg_start, head_w, col * (0.88 * w_d * alpha_env), 0.26 * w_d * alpha_env, true);
+        splat_segment(seg_start, world_c, col * (0.98 * w_d * alpha_env), 0.30 * w_d * alpha_env, false);
     }
 }
 
@@ -553,28 +730,23 @@ fn step_particle(idx: u32, t: f32) {
 
     let agent_id = idx - write_base;
     let a = aspect();
-    let is_narrow = a < 2.4;
-    let n_schools = select(3u, 2u, is_narrow);
-    let agents_per = select(104u, 96u, is_narrow);
-    if (agent_id >= n_schools * agents_per) {
+    let n_active = clamp(u32(round(90.0 * a)), 120u, MAX_AGENTS);
+    if (agent_id >= n_active) {
         return;
     }
 
-    let school_id = agent_id / agents_per;
-    let local_id = agent_id % agents_per;
-    let fs = f32(school_id);
-    let school_off = (fs / f32(n_schools) + 0.13 * hash11(fs * 19.3 + g.seed * 41.0)) * EPOCH_SECS;
-
-    let cycle_t = t + school_off;
+    let seed_off = (0.14 + 0.56 * hash11(g.seed * 41.0 + 3.7)) * EPOCH_SECS;
+    let cycle_t = t + seed_off;
     let gen = u32(max(floor(cycle_t / EPOCH_SECS), 0.0));
     let phase = cycle_t - f32(gen) * EPOCH_SECS;
     let u_epoch = phase / EPOCH_SECS;
-    let env = smoothstep(0.0, 0.07, u_epoch) * (1.0 - smoothstep(0.92, 1.0, u_epoch));
+    let env = smoothstep(0.0, 0.06, u_epoch) * (1.0 - smoothstep(0.94, 1.0, u_epoch));
 
-    let arch = (gen + school_id + u32(g.seed * 13.0)) % 4u;
-    let pal_id = (gen * 3u + school_id * 2u + u32(g.seed * 17.0)) % 4u;
-    let spec = regime_spec(arch, is_narrow);
-    let school_cm = school_center(school_id, n_schools, gen, t + g.dt);
+    let arch = (gen + u32(g.seed * 13.0)) % 4u;
+    let pal_id = (gen * 3u + u32(g.seed * 17.0)) % 4u;
+    let spec = regime_spec(arch);
+    let n_foci = select(4u, 2u, a < 2.4);
+    let n_wasps = select(4u, 2u, a < 2.4);
 
     let st = particles[read_base + agent_id];
     let packed_now = f32((gen % 16777215u) + 1u);
@@ -585,14 +757,14 @@ fn step_particle(idx: u32, t: f32) {
         || !all(st.v.xyz == st.v.xyz);
 
     if (uninit) {
-        let sp = spawn_agent(arch, pal_id, spec, school_id, local_id, agents_per, gen, is_narrow);
+        let sp = spawn_agent(arch, pal_id, spec, agent_id, n_active, n_foci, n_wasps, gen, phase, a);
         particles[write_base + agent_id] = sp;
-        let is_pred = (arch == 0u || arch == 3u) && local_id == 0u;
-        let is_wasp = (arch == 2u) && (local_id < 2u);
+        let is_pred = (arch == 0u || arch == 3u) && agent_id < n_foci;
+        let is_wasp = (arch == 2u) && agent_id < n_wasps;
         if (arch == 2u) {
-            splat_swarm(school_cm, sp.p.xyz, sp.p.xyz, sp.v.xyz, sp.c.rgb, sp.p.w, is_wasp, school_id, gen, phase, env, a);
+            splat_swarm(sp.p.xyz, sp.p.xyz, sp.v.xyz, sp.c.rgb, sp.p.w, is_wasp, env, a);
         } else {
-            splat_fish(school_cm, sp.p.xyz, sp.p.xyz, sp.v.xyz, sp.c.rgb, sp.v.w, sp.p.w, is_pred, school_id, gen, phase, env, a);
+            splat_fish(sp.p.xyz, sp.p.xyz, sp.v.xyz, sp.c.rgb, sp.v.w, sp.p.w, is_pred, env, a);
         }
         return;
     }
@@ -604,9 +776,9 @@ fn step_particle(idx: u32, t: f32) {
     var swim_phase = st.v.w;
     let col = st.c.rgb;
 
-    let is_pred = (arch == 0u || arch == 3u) && local_id == 0u;
-    let is_wasp = (arch == 2u) && (local_id < 2u);
-    let school_base = read_base + school_id * agents_per;
+    let is_pred = (arch == 0u || arch == 3u) && agent_id < n_foci;
+    let is_wasp = (arch == 2u) && agent_id < n_wasps;
+    let n_leaders = select(0u, select(n_foci, n_wasps, arch == 2u), arch != 1u);
 
     var v_new = vel;
     var p_new = pos;
@@ -615,7 +787,7 @@ fn step_particle(idx: u32, t: f32) {
     var speed_max = spec.v_max;
 
     if (is_pred) {
-        let goal = predator_target(arch, phase + 0.18, school_id, gen, is_narrow);
+        let goal = world_predator_target(arch, agent_id, n_foci, gen, phase + 0.18, a);
         let desired = safe_norm3(goal - pos, safe_norm3(vel, vec3<f32>(1.0, 0.0, 0.0))) * 0.74;
         let k_blend = 1.0 - exp(-5.2 * dt);
         v_new = mix(vel, desired, k_blend);
@@ -623,7 +795,7 @@ fn step_particle(idx: u32, t: f32) {
         speed_max = 0.88;
         flash = max(flash, 0.25);
     } else if (is_wasp) {
-        let goal = wasp_target(phase + 0.12, local_id, school_id, gen, is_narrow);
+        let goal = world_wasp_target(agent_id, n_wasps, gen, phase + 0.12, a);
         let desired = safe_norm3(goal - pos, safe_norm3(vel, vec3<f32>(0.0, 1.0, 0.0))) * 1.15;
         let k_blend = 1.0 - exp(-8.5 * dt);
         v_new = mix(vel, desired, k_blend);
@@ -631,7 +803,7 @@ fn step_particle(idx: u32, t: f32) {
         speed_max = 1.32;
         flash = max(flash, 0.45);
     } else {
-        // Reynolds 3D boids neighbor scan + predator scatter / wasp chase.
+        // Reynolds 3D boids neighbor scan + predator scatter / wasp chase across the full world volume.
         var sep = vec3<f32>(0.0);
         var align = vec3<f32>(0.0);
         var cohes = vec3<f32>(0.0);
@@ -645,39 +817,41 @@ fn step_particle(idx: u32, t: f32) {
         let sep_r2 = spec.sep_r * spec.sep_r;
         let align_r2 = spec.align_r * spec.align_r;
         let cohes_r2 = spec.cohes_r * spec.cohes_r;
+        let pref_wasp = (agent_id + u32(floor(phase * 0.14))) % n_wasps;
 
-        let pref_wasp = (local_id + u32(floor(phase * 0.16))) % 2u;
-
-        for (var j_local = 0u; j_local < agents_per; j_local = j_local + 1u) {
-            if (j_local == local_id) {
+        for (var j = 0u; j < n_active; j = j + 1u) {
+            if (j == agent_id) {
                 continue;
             }
-            let nb = particles[school_base + j_local];
+            let nb = particles[read_base + j];
             if (nb.c.w <= 0.5 || abs(nb.c.w - packed_now) > 0.5 || !all(nb.p.xyz == nb.p.xyz)) {
                 continue;
             }
             let d = pos - nb.p.xyz;
-            let dist2 = dot(d, d);
-            let nb_is_pred = (arch == 0u || arch == 3u) && j_local == 0u;
-            let nb_is_wasp = (arch == 2u) && (j_local < 2u);
+            let nb_is_leader = j < n_leaders;
 
-            if (nb_is_pred) {
-                if (dist2 < 0.25 * 0.25 && dist2 > 1e-6) {
+            if (nb_is_leader) {
+                let dist2 = dot(d, d);
+                if (arch == 2u) {
+                    let eff_d2 = select(dist2, dist2 * 0.50, j == pref_wasp);
+                    if (eff_d2 < best_wasp_d2) {
+                        best_wasp_d2 = eff_d2;
+                        wasp_chase = nb.p.xyz - pos;
+                    }
+                } else if (dist2 < 0.28 * 0.28 && dist2 > 1e-6) {
                     let dist = sqrt(dist2);
-                    let w_flee = smoothstep(0.25, 0.03, dist);
+                    let w_flee = smoothstep(0.28, 0.03, dist);
                     flee_vec = flee_vec + (d / dist) * (w_flee * 4.2);
                     flee_strength = max(flee_strength, w_flee);
                 }
                 continue;
             }
 
-            if (nb_is_wasp) {
-                // Bias slightly toward assigned queen wasp so the swarm splits into twin flowing streams.
-                let eff_d2 = select(dist2, dist2 * 0.55, j_local == pref_wasp);
-                if (eff_d2 < best_wasp_d2) {
-                    best_wasp_d2 = eff_d2;
-                    wasp_chase = nb.p.xyz - pos;
-                }
+            if (abs(d.x) >= spec.cohes_r || abs(d.y) >= spec.cohes_r || abs(d.z) >= spec.cohes_r) {
+                continue;
+            }
+            let dist2 = dot(d, d);
+            if (dist2 >= cohes_r2) {
                 continue;
             }
 
@@ -691,10 +865,8 @@ fn step_particle(idx: u32, t: f32) {
                 align = align + nb.v.xyz;
                 n_align = n_align + 1.0;
             }
-            if (dist2 < cohes_r2) {
-                cohes = cohes + nb.p.xyz;
-                n_cohes = n_cohes + 1.0;
-            }
+            cohes = cohes + nb.p.xyz;
+            n_cohes = n_cohes + 1.0;
         }
 
         var steer = sep * spec.w_sep;
@@ -706,14 +878,24 @@ fn step_particle(idx: u32, t: f32) {
             steer = steer + clamp_len3(center_dir * 3.5, 1.0) * spec.w_cohes;
         }
 
-        // Regime-specific goal / current field.
+        // Regime-specific world-space current or goal field.
         if (arch == 0u) {
-            // Pelagic Baitball: spacious hollow orbital swirl + dramatic radial predator scatter.
-            let bait_c = vec3<f32>(0.05 * sin(phase * 0.45), 0.04 * cos(phase * 0.55), 0.0);
-            let rel_c = pos - bait_c;
+            // Pelagic Baitballs: soft assignment to nearest roaming locus + dramatic predator burst scatter.
+            let pref_k = agent_id % n_foci;
+            var best_c = roam_locus(0u, n_foci, gen, phase, a);
+            var best_score = 1e6;
+            for (var k = 0u; k < n_foci; k = k + 1u) {
+                let c = roam_locus(k, n_foci, gen, phase, a);
+                let d_l = length(pos - c) * select(1.0, 0.72, k == pref_k);
+                if (d_l < best_score) {
+                    best_score = d_l;
+                    best_c = c;
+                }
+            }
+            let rel_c = pos - best_c;
             let r_ball = max(length(rel_c), 1e-4);
-            let tang = vec3<f32>(-rel_c.y, rel_c.x, 0.18 * sin(phase * 0.7 + f32(local_id)));
-            let shell_pull = (0.19 - r_ball) * 2.2;
+            let tang = vec3<f32>(-rel_c.y, rel_c.x, 0.18 * sin(phase * 0.7 + f32(agent_id)));
+            let shell_pull = (0.21 - r_ball) * 2.2;
             steer = steer + (safe_norm3(rel_c, vec3<f32>(1.0, 0.0, 0.0)) * shell_pull + safe_norm3(tang, vec3<f32>(1.0, 0.0, 0.0)) * 0.90) * spec.w_goal;
             if (flee_strength > 0.01) {
                 steer = steer + flee_vec * 2.6;
@@ -722,33 +904,46 @@ fn step_particle(idx: u32, t: f32) {
                 flash = max(flash, flee_strength);
             }
         } else if (arch == 1u) {
-            // Reef Ribbon Current: stagger fish along twin sinuous figure-8 splines for long flowing streams.
-            let branch = local_id % 2u;
-            let rank_u = f32(local_id) / max(f32(agents_per), 1.0);
-            let lag = rank_u * 6.8;
-            let s_cur = phase - lag;
-            let p_tgt = ribbon_target(s_cur + 0.30, school_id, gen, is_narrow, branch);
-            let p_ahead = ribbon_target(s_cur + 0.45, school_id, gen, is_narrow, branch);
-            let flow_dir = safe_norm3(p_ahead - p_tgt, vec3<f32>(1.0, 0.0, 0.0));
+            // Panoramic Reef Ribbons: stagger fish cleanly along isotropic Catmull-Rom streams across the whole width.
+            let branch = agent_id % n_foci;
+            let rank_u = f32(agent_id) / max(f32(n_active), 1.0);
+            let lag = rank_u * 8.4;
+            let s_cur = max(phase + 9.0 - lag, 0.1);
+            let st_r = world_ribbon_state(branch, n_foci, gen, s_cur + 0.25, a);
+            let p_tgt = st_r[0];
+            let flow_dir = st_r[1];
             let to_spline = p_tgt - pos;
             steer = steer + (clamp_len3(to_spline * 4.5, 1.35) + flow_dir * 0.95) * spec.w_goal;
         } else if (arch == 2u) {
-            // Wasp & Firefly Swarm: snap toward assigned wasp with orbital curl for wide comet arcs.
+            // Open-Sky Wasp & Firefly Swarm: snap toward roaming queen wasps with orbital curl.
             let j_off = vec3<f32>(
-                sin(phase * 2.6 + f32(local_id) * 1.7),
-                cos(phase * 2.3 + f32(local_id) * 2.1),
-                sin(phase * 2.0 - f32(local_id) * 1.3),
+                sin(phase * 2.6 + f32(agent_id) * 1.7),
+                cos(phase * 2.3 + f32(agent_id) * 2.1),
+                sin(phase * 2.0 - f32(agent_id) * 1.3),
             ) * 0.095;
             let swirl = safe_norm3(vec3<f32>(-wasp_chase.y, wasp_chase.x, wasp_chase.z * 0.3), vec3<f32>(0.0, 1.0, 0.0));
             steer = steer + (safe_norm3(wasp_chase + j_off, vel) * 0.85 + swirl * 0.35) * spec.w_goal;
             let near_w = smoothstep(0.16, 0.02, sqrt(max(best_wasp_d2, 0.0)));
             flash = max(flash, near_w * 0.80);
         } else {
-            // Abyssal Torus Vortex: evenly spaced 3D torus swirl + predator parting surge.
-            let tilt = 0.30 * sin(phase * 0.18 + f32(school_id));
-            let local_p = rotate_3d(pos, tilt, tilt * 0.6, 0.0);
+            // Roaming Abyssal Torus Mills: 1:1 circular 3D torus swirl + predator parting surge.
+            let pref_k = agent_id % n_foci;
+            var best_k = 0u;
+            var best_c = roam_locus(0u, n_foci, gen, phase, a);
+            var best_score = 1e6;
+            for (var k = 0u; k < n_foci; k = k + 1u) {
+                let c = roam_locus(k, n_foci, gen, phase, a);
+                let d_l = length(pos - c) * select(1.0, 0.72, k == pref_k);
+                if (d_l < best_score) {
+                    best_score = d_l;
+                    best_c = c;
+                    best_k = k;
+                }
+            }
+            let tilt = 0.30 * sin(phase * 0.18 + f32(best_k));
+            let local_p = rotate_3d(pos - best_c, tilt, tilt * 0.6, 0.0);
             let r_xy = max(length(local_p.xy), 1e-4);
-            let ring_r = 0.21;
+            let ring_r = 0.22;
             let rad_dir = vec3<f32>(local_p.xy / r_xy, 0.0);
             let tang_dir = vec3<f32>(-rad_dir.y, rad_dir.x, 0.0);
             let torus_force_local = rad_dir * ((ring_r - r_xy) * 5.2)
@@ -764,18 +959,24 @@ fn step_particle(idx: u32, t: f32) {
             }
         }
 
-        // Smooth soft ellipsoid containment keeps schools cohesive inside the frame.
-        let ellip = pos / vec3<f32>(spec.bound_xy, spec.bound_xy * 0.72, spec.bound_z);
-        let r_ell = length(ellip);
-        if (r_ell > 0.86) {
-            let push = (r_ell - 0.86) * 3.6;
-            steer = steer - safe_norm3(ellip, vec3<f32>(0.0)) * push;
+        // Smooth outer bezel turn-back keeps swimmers cleanly inside the visible monitor.
+        if (pos.x < 0.10) {
+            steer.x = steer.x + (0.10 - pos.x) * 38.0;
+        } else if (pos.x > a - 0.10) {
+            steer.x = steer.x - (pos.x - (a - 0.10)) * 38.0;
+        }
+        if (pos.y < 0.10) {
+            steer.y = steer.y + (0.10 - pos.y) * 38.0;
+        } else if (pos.y > 0.90) {
+            steer.y = steer.y - (pos.y - 0.90) * 38.0;
+        }
+        if (abs(pos.z) > 0.24) {
+            steer.z = steer.z - sign(pos.z) * (abs(pos.z) - 0.24) * 38.0;
         }
 
         let target_spd = mix(speed_min, speed_max, clamp(0.45 + 0.55 * flee_strength, 0.0, 1.0));
         let desired_v = safe_norm3(steer, safe_norm3(vel, vec3<f32>(1.0, 0.0, 0.0))) * target_spd;
 
-        // Swarm uses inertial acceleration (classic XSwarm overshoot), fish use crisp turn-rate steering.
         if (arch == 2u) {
             let accel = (desired_v - vel) * 3.0;
             v_new = vel + accel * dt;
@@ -788,7 +989,6 @@ fn step_particle(idx: u32, t: f32) {
         }
     }
 
-    // Clamp velocity cleanly inside [speed_min, speed_max].
     let spd_new = length(v_new);
     if (spd_new < speed_min) {
         v_new = safe_norm3(v_new, vec3<f32>(1.0, 0.0, 0.0)) * speed_min;
@@ -797,18 +997,23 @@ fn step_particle(idx: u32, t: f32) {
     }
 
     p_new = pos + v_new * dt;
-    // Soft safety bounce against outer bounds.
-    let hard_lim = vec3<f32>(spec.bound_xy * 1.15, spec.bound_xy * 0.84, spec.bound_z * 1.25);
-    if (abs(p_new.x) > hard_lim.x) {
-        p_new.x = clamp(p_new.x, -hard_lim.x, hard_lim.x);
-        v_new.x = -v_new.x * 0.65;
+    // Soft safety bounce against the monitor bezels and outer depth walls.
+    if (p_new.x < 0.03) {
+        p_new.x = 0.03;
+        v_new.x = abs(v_new.x) * 0.65;
+    } else if (p_new.x > a - 0.03) {
+        p_new.x = a - 0.03;
+        v_new.x = -abs(v_new.x) * 0.65;
     }
-    if (abs(p_new.y) > hard_lim.y) {
-        p_new.y = clamp(p_new.y, -hard_lim.y, hard_lim.y);
-        v_new.y = -v_new.y * 0.65;
+    if (p_new.y < 0.03) {
+        p_new.y = 0.03;
+        v_new.y = abs(v_new.y) * 0.65;
+    } else if (p_new.y > 0.97) {
+        p_new.y = 0.97;
+        v_new.y = -abs(v_new.y) * 0.65;
     }
-    if (abs(p_new.z) > hard_lim.z) {
-        p_new.z = clamp(p_new.z, -hard_lim.z, hard_lim.z);
+    if (abs(p_new.z) > 0.36) {
+        p_new.z = clamp(p_new.z, -0.36, 0.36);
         v_new.z = -v_new.z * 0.65;
     }
 
@@ -816,7 +1021,7 @@ fn step_particle(idx: u32, t: f32) {
     swim_phase = (swim_phase + (6.8 + final_spd * 12.0) * dt) % TAU;
 
     if (!all(p_new == p_new) || !all(v_new == v_new)) {
-        let sp = spawn_agent(arch, pal_id, spec, school_id, local_id, agents_per, gen, is_narrow);
+        let sp = spawn_agent(arch, pal_id, spec, agent_id, n_active, n_foci, n_wasps, gen, phase, a);
         particles[write_base + agent_id] = sp;
         return;
     }
@@ -828,24 +1033,22 @@ fn step_particle(idx: u32, t: f32) {
     particles[write_base + agent_id] = next_st;
 
     if (arch == 2u) {
-        splat_swarm(school_cm, p_new, pos, v_new, col, next_st.p.w, is_wasp, school_id, gen, phase, env, a);
+        splat_swarm(p_new, pos, v_new, col, next_st.p.w, is_wasp, env, a);
     } else {
-        splat_fish(school_cm, p_new, pos, v_new, col, swim_phase, next_st.p.w, is_pred, school_id, gen, phase, env, a);
+        splat_fish(p_new, pos, v_new, col, swim_phase, next_st.p.w, is_pred, env, a);
     }
 }
 
 fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec4<f32> {
     let dims = splat_dims();
-    let duv = vec2<f32>(DRIFT_VX * g.dt / aspect(), 0.0);
-    let base_uv = uv - duv;
-    var prev = state_sample(base_uv);
+    var prev = state_sample(uv);
     if (dims.y >= 180) {
         let tex = state_texel();
         let blur = (
-            state_sample(base_uv + vec2<f32>(tex.x, 0.0))
-            + state_sample(base_uv - vec2<f32>(tex.x, 0.0))
-            + state_sample(base_uv + vec2<f32>(0.0, tex.y))
-            + state_sample(base_uv - vec2<f32>(0.0, tex.y))
+            state_sample(uv + vec2<f32>(tex.x, 0.0))
+            + state_sample(uv - vec2<f32>(tex.x, 0.0))
+            + state_sample(uv + vec2<f32>(0.0, tex.y))
+            + state_sample(uv - vec2<f32>(0.0, tex.y))
         ) * 0.25;
         let diff = clamp(g.dt * 7.5, 0.0, 0.22);
         prev = mix(prev, blur, diff);

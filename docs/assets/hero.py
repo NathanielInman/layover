@@ -115,7 +115,7 @@ HACK_ROWS = [
     ("Tidal Spiral", "Colliding 3D spiral galaxies pulling luminous tidal bridges and orbital star streams across the dark (after Galaxy by Uli Siegmund, Harald Backert and Hubert Feyrer, and Grav by Greg Bowering).", "3.9%", "10s", "9.3%"),
     ("Silk Flurry", "Silky 3D plasma ribbons and luminous smoke tendrils streaming from orbiting sparks across the dark (after Flurry by Calum Robinson and Tobias Sargeant).", "4.2%", "5s", "10.0%"),
     ("Fluid Beads", "Luminous fluid beads sloshing, colliding and cascading through tilting gravity chambers across the dark (after Fluidballs by Peter Birtles and Jamie Zawinski).", "5.2%", "6s", "9.1%"),
-    ("Silver Shoal", "Bioluminescent boid schools and darting swarms weaving, banking and scattering across the dark (after GLSchool by David C. Lambert and Swarm by Jeff Butterworth).", "4.6%", "5s", "7.4%"),
+    ("Silver Shoal", "Bioluminescent boid schools and darting swarms weaving, banking and scattering across the dark (after GLSchool by David C. Lambert and Swarm by Jeff Butterworth).", "4.6%", "6s", "7.6%"),
     ("Wisp Swarm", "Translucent X-ray critter wakes and wind-casting scent seekers weaving glowing trails across the dark (after XRaySwarm by Chris Leger and Anemotaxis by Eugene Balkovsky).", "5.7%", "11s", "12.5%"),
     ("Departure Board", "Split-flap rows from the other tools on the desk: states and counts, never titles.", "1.9%", "8s", "5.5%"),
 ]
@@ -481,7 +481,7 @@ WEAR = [
     ("tidal-spiral", "3.9%", "10s", " 9.3%"),
     ("silk-flurry", "4.2%", " 5s", "10.0%"),
     ("fluid-beads", "5.2%", " 6s", " 9.1%"),
-    ("silver-shoal", "4.6%", " 5s", " 7.4%"),
+    ("silver-shoal", "4.6%", " 6s", " 7.6%"),
     ("wisp-swarm", "5.7%", "11s", "12.5%"),
     ("departure-board", "1.9%", " 8s", " 5.5%"),
 ]
