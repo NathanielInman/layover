@@ -14,6 +14,10 @@ struct Globals {
     fade: f32,
     frame: f32,
     line_count: f32,
+    mesh_draw: f32,
+    mesh_count: f32,
+    _pad0: f32,
+    _pad1: f32,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;

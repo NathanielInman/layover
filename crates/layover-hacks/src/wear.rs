@@ -331,6 +331,7 @@ mod tests {
         feedback: None,
         particles: None,
         lines: None,
+        mesh: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { let on = step(1.6, p.x) * step(p.x, 2.0) * step(0.4, p.y) * step(p.y, 0.6); return vec3<f32>(on * 0.9); }",
     };
 
@@ -345,6 +346,7 @@ mod tests {
         feedback: None,
         particles: None,
         lines: None,
+        mesh: None,
         source: "fn hack(p: vec2<f32>, t: f32) -> vec3<f32> { return vec3<f32>(0.8 + 0.2 * sin(t * 3.0 + p.x * 40.0)); }",
     };
 
@@ -365,6 +367,7 @@ mod tests {
         }),
         particles: None,
         lines: None,
+        mesh: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, _t: f32) -> vec4<f32> {
     if (g.frame < 0.5) {
@@ -396,6 +399,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
         }),
         particles: None,
         lines: None,
+        mesh: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
     let prev = state_faded(uv).rgb;
@@ -428,6 +432,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
         }),
         particles: Some(crate::Particles { count: 256 }),
         lines: None,
+        mesh: None,
         source: r#"
 fn step_particle(idx: u32, _t: f32) {
     if (g.frame < 0.5) {
@@ -463,6 +468,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
         }),
         particles: Some(crate::Particles { count: 256 }),
         lines: None,
+        mesh: None,
         source: r#"
 fn step_particle(idx: u32, t: f32) {
     let fi = f32(idx);
@@ -495,6 +501,7 @@ fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
         feedback: None,
         particles: None,
         lines: Some(crate::Lines { count: 1, blend: crate::LineBlend::Alpha }),
+        mesh: None,
         source: r#"
 fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
     return vec3<f32>(0.0);
@@ -521,6 +528,7 @@ fn shape(_idx: u32, _t: f32) -> Shape {
         feedback: None,
         particles: None,
         lines: Some(crate::Lines { count: 32, blend: crate::LineBlend::Max }),
+        mesh: None,
         source: r#"
 fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
     return vec3<f32>(0.0);
@@ -596,6 +604,7 @@ fn shape(idx: u32, t: f32) -> Shape {
         feedback: None,
         particles: None,
         lines: Some(crate::Lines { count: 40, blend: crate::LineBlend::Add }),
+        mesh: None,
         source: r#"
 fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
     return vec3<f32>(0.0);
@@ -625,6 +634,7 @@ fn shape(idx: u32, t: f32) -> Shape {
         feedback: None,
         particles: None,
         lines: Some(crate::Lines { count: 8, blend: crate::LineBlend::Alpha }),
+        mesh: None,
         source: r#"
 fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
     return vec3<f32>(0.0);
@@ -660,6 +670,7 @@ fn shape(idx: u32, t: f32) -> Shape {
         }),
         particles: None,
         lines: Some(crate::Lines { count: 8, blend: crate::LineBlend::Max }),
+        mesh: None,
         source: r#"
 fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
     let prev = state_faded(uv).rgb;
@@ -694,6 +705,7 @@ fn shape(idx: u32, t: f32) -> Shape {
         feedback: None,
         particles: None,
         lines: Some(crate::Lines { count: 0, blend: crate::LineBlend::Alpha }),
+        mesh: None,
         source: r#"
 fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
     return vec3<f32>(0.0);
@@ -701,6 +713,304 @@ fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
 fn shape(_idx: u32, _t: f32) -> Shape {
     return shape_none();
 }
+"#,
+    };
+
+    fn custom_tetrahedron() -> crate::MeshData {
+        use crate::{MeshData, MeshVertex};
+        let p =
+            [[0.0f32, 0.5, 0.0], [-0.45, -0.35, 0.35], [0.45, -0.35, 0.35], [0.0, -0.35, -0.45]];
+        let faces = [[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 3, 2]];
+        let mut vertices = Vec::with_capacity(12);
+        let mut indices = Vec::with_capacity(12);
+        for [i0, i1, i2] in faces {
+            let (a, b, c) = (p[i0], p[i1], p[i2]);
+            let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+            let normal = [n[0] / l, n[1] / l, n[2] / l];
+            let base = vertices.len() as u32;
+            vertices.push(MeshVertex { pos: a, normal, uv: [0.0, 0.0] });
+            vertices.push(MeshVertex { pos: b, normal, uv: [1.0, 0.0] });
+            vertices.push(MeshVertex { pos: c, normal, uv: [0.5, 1.0] });
+            indices.extend_from_slice(&[base, base + 1, base + 2]);
+        }
+        MeshData { vertices, indices }
+    }
+
+    fn bad_custom_mesh() -> crate::MeshData {
+        use crate::{MeshData, MeshVertex};
+        MeshData {
+            vertices: vec![MeshVertex { pos: [0.0; 3], normal: [0.0, 1.0, 0.0], uv: [0.0; 2] }],
+            indices: vec![0, 1, 2],
+        }
+    }
+
+    static STILL_MESH_DRAWS: &[crate::MeshDraw] =
+        &[crate::MeshDraw { mesh: crate::MeshSource::Cube, instances: 1 }];
+
+    static STILL_MESH_HACK: Hack = Hack {
+        id: "still-mesh",
+        name: "Still Mesh",
+        about: "A bright static 3D cube that never moves.",
+        text_heavy: false,
+        hue_turn: false,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: STILL_MESH_DRAWS, cull: crate::MeshCull::Back }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn mesh_camera(_t: f32) -> MeshCamera {
+    return mesh_camera_persp(vec3<f32>(0.0, 0.0, 3.0), vec3<f32>(0.0), 0.9, 0.1, 20.0);
+}
+fn mesh_instance(_draw: u32, _inst: u32, _t: f32) -> MeshInstance {
+    let inst = mesh_instance_trs(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(1.1), vec3<f32>(0.9));
+    return mesh_material(inst, 0.3, 0.1, 0.4, vec3<f32>(0.85));
+}
+"#,
+    };
+
+    static MOVING_MESH_DRAWS: &[crate::MeshDraw] = &[
+        crate::MeshDraw { mesh: crate::MeshSource::Cube, instances: 6 },
+        crate::MeshDraw { mesh: crate::MeshSource::Sphere, instances: 4 },
+        crate::MeshDraw { mesh: crate::MeshSource::Cylinder, instances: 3 },
+        crate::MeshDraw { mesh: crate::MeshSource::Torus, instances: 3 },
+        crate::MeshDraw { mesh: crate::MeshSource::Gear, instances: 3 },
+        crate::MeshDraw { mesh: crate::MeshSource::Custom(custom_tetrahedron), instances: 2 },
+    ];
+
+    static MOVING_MESH_HACK: Hack = Hack {
+        id: "moving-mesh",
+        name: "Moving Mesh",
+        about: "Orbiting, connected and tumbling 3D mesh primitives under depth testing.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: MOVING_MESH_DRAWS, cull: crate::MeshCull::Back }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn mesh_camera(t: f32) -> MeshCamera {
+    let eye = vec3<f32>(0.35 * sin(t * 0.25), 0.25 * cos(t * 0.19), 3.2);
+    return mesh_camera_persp(eye, vec3<f32>(0.0), 0.95, 0.1, 30.0);
+}
+fn mesh_instance(draw: u32, inst: u32, t: f32) -> MeshInstance {
+    if (draw == 0u && inst + 1u == mesh_instance_count()) {
+        return mesh_instance_none();
+    }
+    let id = f32(draw * 7u + inst);
+    let ph = id * 0.91 + g.seed * TAU;
+    let half_w = aspect() * 0.72;
+    let pos = vec3<f32>(
+        half_w * sin(t * 0.42 + ph),
+        0.58 * cos(t * 0.57 + ph * 1.3),
+        0.45 * sin(t * 0.36 - ph),
+    );
+    let col = 0.5 + 0.42 * cos(t * 0.45 + ph + vec3<f32>(0.0, 2.094, 4.188));
+    if (draw == 2u) {
+        let a = pos + vec3<f32>(0.22 * cos(t + ph), 0.18 * sin(t * 1.1 + ph), 0.0);
+        let b = pos - vec3<f32>(0.22 * cos(t + ph), 0.18 * sin(t * 1.1 + ph), 0.0);
+        return mesh_material(mesh_instance_mat(mesh_from_to(a, b, 0.07), col), 0.28, 0.35, 0.5, vec3<f32>(0.04));
+    }
+    let rot = vec3<f32>(t * 0.8 + ph, t * 1.1 - ph * 0.5, t * 0.6);
+    let item = mesh_instance_trs(pos, rot, vec3<f32>(0.34), col);
+    return mesh_material(item, 0.32, 0.30, 0.55, col * 0.05);
+}
+"#,
+    };
+
+    static DEPTH_OCCLUSION_DRAWS: &[crate::MeshDraw] = &[
+        crate::MeshDraw { mesh: crate::MeshSource::Cube, instances: 1 },
+        crate::MeshDraw { mesh: crate::MeshSource::Cube, instances: 1 },
+    ];
+
+    static DEPTH_OCCLUSION_HACK: Hack = Hack {
+        id: "depth-occlusion",
+        name: "Depth Occlusion",
+        about: "Draws a near green cube before a far red cube to test Z-buffering.",
+        text_heavy: false,
+        hue_turn: false,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: DEPTH_OCCLUSION_DRAWS, cull: crate::MeshCull::Back }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn mesh_camera(_t: f32) -> MeshCamera {
+    return mesh_camera_ortho(vec3<f32>(0.0, 0.0, 5.0), vec3<f32>(0.0), 1.0, 0.5, 20.0);
+}
+fn mesh_instance(draw: u32, _inst: u32, _t: f32) -> MeshInstance {
+    if (draw == 0u) {
+        let near = mesh_instance_trs(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0), vec3<f32>(0.4), vec3<f32>(0.0));
+        return mesh_material(near, 0.5, 0.0, 0.0, vec3<f32>(0.0, 0.9, 0.0));
+    }
+    let far = mesh_instance_trs(vec3<f32>(0.0, 0.0, -1.0), vec3<f32>(0.0), vec3<f32>(1.4), vec3<f32>(0.0));
+    return mesh_material(far, 0.5, 0.0, 0.0, vec3<f32>(0.9, 0.0, 0.0));
+}
+"#,
+    };
+
+    static COMPOSED_MESH_DRAWS: &[crate::MeshDraw] =
+        &[crate::MeshDraw { mesh: crate::MeshSource::Octahedron, instances: 6 }];
+
+    static FEEDBACK_MESH_AND_LINE_HACK: Hack = Hack {
+        id: "feedback-mesh-line",
+        name: "Feedback Mesh And Line",
+        about: "Composes Tier S feedback, Tier M meshes and Tier L lines together.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: Some(crate::Feedback {
+            fade_secs: 2.5,
+            step_hz: 1.0,
+            max_steps: 1,
+            max_height: None,
+            wrap: false,
+        }),
+        particles: None,
+        lines: Some(crate::Lines { count: 6, blend: crate::LineBlend::Max }),
+        mesh: Some(crate::Mesh { draws: COMPOSED_MESH_DRAWS, cull: crate::MeshCull::Back }),
+        source: r#"
+fn step_state(uv: vec2<f32>, p: vec2<f32>, t: f32) -> vec4<f32> {
+    let prev = state_faded(uv).rgb;
+    let a = aspect();
+    let c = vec2<f32>(a * (0.5 + 0.35 * sin(t * 0.7)), 0.5 + 0.3 * cos(t * 1.1));
+    let m = disc(length(p - c), 0.14, 0.04);
+    let col = 0.35 + 0.25 * cos(t * 0.8 + vec3<f32>(0.0, 2.094, 4.188));
+    return vec4<f32>(max(prev, col * m), 1.0);
+}
+fn hack(p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return state_sample(state_uv(p)).rgb;
+}
+fn mesh_camera(_t: f32) -> MeshCamera {
+    return mesh_camera_persp(vec3<f32>(0.0, 0.0, 3.2), vec3<f32>(0.0), 0.9, 0.1, 20.0);
+}
+fn mesh_instance(_draw: u32, inst: u32, t: f32) -> MeshInstance {
+    let ph = f32(inst) * 1.0472 + t * 0.65;
+    let pos = vec3<f32>(aspect() * 0.6 * sin(ph), 0.55 * cos(ph * 1.3), 0.25 * cos(ph));
+    let col = 0.5 + 0.4 * cos(t * 0.5 + ph + vec3<f32>(0.0, 2.094, 4.188));
+    return mesh_instance_trs(pos, vec3<f32>(ph, ph * 0.7, 0.0), vec3<f32>(0.34), col);
+}
+fn shape(idx: u32, t: f32) -> Shape {
+    let fi = f32(idx);
+    let ph = fi * 1.0472 + t * 0.8;
+    let c = vec2<f32>(aspect() * (0.5 + 0.35 * cos(ph)), 0.5 + 0.3 * sin(ph * 1.3));
+    let col = vec4<f32>(0.5 + 0.4 * sin(t + fi + vec3<f32>(0.0, 2.094, 4.188)), 1.0);
+    return shape_ring(c, 0.10, 0.035, col, 0.02);
+}
+"#,
+    };
+
+    static OVERDRIVEN_MESH_DRAWS: &[crate::MeshDraw] =
+        &[crate::MeshDraw { mesh: crate::MeshSource::Cube, instances: 4 }];
+
+    static OVERDRIVEN_MESH_HACK: Hack = Hack {
+        id: "overdriven-mesh",
+        name: "Overdriven Mesh",
+        about: "Large bright emissive cubes held under the care limits.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: OVERDRIVEN_MESH_DRAWS, cull: crate::MeshCull::None }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+fn mesh_camera(_t: f32) -> MeshCamera {
+    return mesh_camera_ortho(vec3<f32>(0.0, 0.0, 5.0), vec3<f32>(0.0), 1.0, 0.5, 20.0);
+}
+fn mesh_instance(_draw: u32, inst: u32, t: f32) -> MeshInstance {
+    let off = (f32(inst) - 1.5) * 0.9 + 0.15 * sin(t + f32(inst));
+    let m = mesh_instance_trs(vec3<f32>(off, 0.0, 0.0), vec3<f32>(t * 0.3), vec3<f32>(1.2), vec3<f32>(1.0));
+    return mesh_material(m, 0.5, 0.0, 0.2, vec3<f32>(1.0));
+}
+"#,
+    };
+
+    static EMPTY_MESH_HACK: Hack = Hack {
+        id: "empty-mesh",
+        name: "Empty Mesh",
+        about: "Invalid empty Tier M draw list.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: &[], cull: crate::MeshCull::Back }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> { return vec3<f32>(0.0); }
+fn mesh_camera(_t: f32) -> MeshCamera { return mesh_camera_ortho(vec3<f32>(0.0, 0.0, 2.0), vec3<f32>(0.0), 1.0, 0.1, 10.0); }
+fn mesh_instance(_draw: u32, _inst: u32, _t: f32) -> MeshInstance { return mesh_instance_none(); }
+"#,
+    };
+
+    static ZERO_INSTANCES_MESH_DRAWS: &[crate::MeshDraw] =
+        &[crate::MeshDraw { mesh: crate::MeshSource::Cube, instances: 0 }];
+
+    static ZERO_INSTANCES_MESH_HACK: Hack = Hack {
+        id: "zero-inst-mesh",
+        name: "Zero Instance Mesh",
+        about: "Invalid Tier M draw with zero instances.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: ZERO_INSTANCES_MESH_DRAWS, cull: crate::MeshCull::Back }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> { return vec3<f32>(0.0); }
+fn mesh_camera(_t: f32) -> MeshCamera { return mesh_camera_ortho(vec3<f32>(0.0, 0.0, 2.0), vec3<f32>(0.0), 1.0, 0.1, 10.0); }
+fn mesh_instance(_draw: u32, _inst: u32, _t: f32) -> MeshInstance { return mesh_instance_none(); }
+"#,
+    };
+
+    static BAD_CUSTOM_MESH_DRAWS: &[crate::MeshDraw] =
+        &[crate::MeshDraw { mesh: crate::MeshSource::Custom(bad_custom_mesh), instances: 1 }];
+
+    static BAD_CUSTOM_MESH_HACK: Hack = Hack {
+        id: "bad-custom-mesh",
+        name: "Bad Custom Mesh",
+        about: "Invalid Tier M custom geometry with out-of-bounds indices.",
+        text_heavy: false,
+        hue_turn: true,
+        board: false,
+        raymarch: false,
+        feedback: None,
+        particles: None,
+        lines: None,
+        mesh: Some(crate::Mesh { draws: BAD_CUSTOM_MESH_DRAWS, cull: crate::MeshCull::Back }),
+        source: r#"
+fn hack(_p: vec2<f32>, _t: f32) -> vec3<f32> { return vec3<f32>(0.0); }
+fn mesh_camera(_t: f32) -> MeshCamera { return mesh_camera_ortho(vec3<f32>(0.0, 0.0, 2.0), vec3<f32>(0.0), 1.0, 0.1, 10.0); }
+fn mesh_instance(_draw: u32, _inst: u32, _t: f32) -> MeshInstance { return mesh_instance_none(); }
 "#,
     };
 
@@ -854,5 +1164,137 @@ fn shape(_idx: u32, _t: f32) -> Shape {
         let before: f32 = c.iter().sum();
         let after: f32 = turned.iter().sum();
         assert!((before - after).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_still_mesh_hack_fails_the_dwell_budget() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &STILL_MESH_HACK, &care, 60, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.max_dwell_secs > budget.max_dwell_secs, "{}", report.summary());
+        assert!(!report.failures(&budget).is_empty());
+    }
+
+    #[test]
+    fn a_moving_mesh_hack_passes_wear() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+        let report = run(&gpu, &MOVING_MESH_HACK, &care, 120, [64, 18], G9_CANVAS).unwrap();
+        assert!(report.failures(&budget).is_empty(), "{}", report.summary());
+        assert!(report.average > 0.002, "{}", report.summary());
+    }
+
+    #[test]
+    fn mesh_wear_is_deterministic_from_seed() {
+        let Some(gpu) = gpu() else { return };
+        let (care, _) = shipped();
+        let a = run(&gpu, &MOVING_MESH_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        let b = run(&gpu, &MOVING_MESH_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert_eq!(a.average, b.average);
+        assert_eq!(a.max_dwell_secs, b.max_dwell_secs);
+        assert_eq!(a.hot_spot, b.hot_spot);
+        assert_eq!(a.peak, b.peak);
+    }
+
+    #[test]
+    fn mesh_depth_buffer_occludes_far_geometry_behind_near_geometry() {
+        let Some(gpu) = gpu() else { return };
+        let care = CareSettings {
+            drive: 1.0,
+            max_average: 1.0,
+            white: 1.0,
+            orbit_secs: None,
+            hue_cycle_secs: None,
+        };
+        let size = [64u32, 64u32];
+        let canvas = [64.0f32, 64.0f32];
+        let device = &gpu.device;
+        let mut renderer = Renderer::new(device, &gpu.queue, care);
+        renderer.resize(canvas, size);
+        renderer.reset_limiter();
+        renderer.reset_state();
+        renderer.prepare(&DEPTH_OCCLUSION_HACK).unwrap();
+
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth_test"),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        let row = (size[0] * 4).div_ceil(256) * 256;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("depth_readback"),
+            size: (row * size[1]) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let place = Placement { rect: [0.0, 0.0, canvas[0], canvas[1]], px: size };
+        let frame =
+            Frame { hack: &DEPTH_OCCLUSION_HACK, t: 0.0, phase: 0.0, dt: 1.0 / 60.0, seed: 0.0 };
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw_canvas(&mut enc, &frame).unwrap();
+        renderer.draw_output(&mut enc, 0, &view, format, &place, 1.0).unwrap();
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(size[1]),
+                },
+            },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+        gpu.queue.submit(Some(enc.finish()));
+        readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("map depth readback"));
+        device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).unwrap();
+
+        let bytes = readback.get_mapped_range(..).unwrap();
+        let px_at = |x: u32, y: u32| -> [u8; 3] {
+            let off = y as usize * row as usize + x as usize * 4;
+            [bytes[off], bytes[off + 1], bytes[off + 2]]
+        };
+        let center = px_at(32, 32);
+        let outer = px_at(46, 32);
+        assert!(
+            center[1] > 100 && center[1] > center[0].saturating_mul(3),
+            "expected near green cube at center, got {center:?}"
+        );
+        assert!(
+            outer[0] > 100 && outer[0] > outer[1].saturating_mul(3),
+            "expected far red cube outside near cube, got {outer:?}"
+        );
+    }
+
+    #[test]
+    fn mesh_composes_with_feedback_and_lines_and_validates_bad_specs() {
+        let Some(gpu) = gpu() else { return };
+        let (care, budget) = shipped();
+
+        let composed =
+            run(&gpu, &FEEDBACK_MESH_AND_LINE_HACK, &care, 20, [64, 18], G9_CANVAS).unwrap();
+        assert!(composed.failures(&budget).is_empty(), "{}", composed.summary());
+        assert!(composed.average > 0.002, "{}", composed.summary());
+
+        let overdriven = run(&gpu, &OVERDRIVEN_MESH_HACK, &care, 30, [64, 18], G9_CANVAS).unwrap();
+        assert!(overdriven.peak <= budget.max_drive + 1.0 / 255.0, "{}", overdriven.summary());
+        assert!(overdriven.average <= budget.max_average + 0.01, "{}", overdriven.summary());
+
+        let mut renderer = Renderer::new(&gpu.device, &gpu.queue, care);
+        assert!(renderer.prepare(&EMPTY_MESH_HACK).is_err());
+        assert!(renderer.prepare(&ZERO_INSTANCES_MESH_HACK).is_err());
+        assert!(renderer.prepare(&BAD_CUSTOM_MESH_HACK).is_err());
     }
 }

@@ -150,10 +150,14 @@ exponential fade (`g.fade = exp(-dt / fade_secs)`), a hack with
 `particles: Some(...)` also gets `hacks/particles.wgsl` (persistent `Particle`
 storage buffer, atomic fixed-point splat helpers and `step_particle(idx, t)` /
 `resolve_state(uv, p, t, splat)` compute passes resolving into the ping-pong
-state textures), and a hack with `lines: Some(...)` also gets `hacks/lines.wgsl`
+state textures), `lines: Some(...)` also gets `hacks/lines.wgsl`
 (instanced SDF quads for segments, discs, rings/arcs, rounded boxes and
 triangles with `Alpha`, `Add` or `Max` blending, energy-conserving subpixel
-antialiasing and optional glow over `shape(idx, t)`).
+antialiasing and optional glow over `shape(idx, t)`), and `mesh: Some(...)`
+also gets `hacks/mesh.wgsl` (procedural indexed primitives in `mesh.rs`, a
+`Depth32Float` depth buffer, isotropic perspective/orthographic cameras and
+instanced Blinn-Phong + rim lighting over `mesh_camera(t)` and
+`mesh_instance(draw, inst, t)`).
 
 Each frame:
 
@@ -162,9 +166,12 @@ Each frame:
    `resolve_state` compute passes into the feedback texture), fading older
    history on the hack's clock.
 2. The hack pass draws the whole canvas into one offscreen texture at
-   `power.render_scale`, with the orbit offset added to every position; Tier L
-   hacks (`lines`) draw their instanced SDF primitives into the same offscreen
-   texture right after `hack(p, t)` with the same orbit offset.
+   `power.render_scale`, with the orbit offset added to every position; Tier M
+   hacks (`mesh`) render depth-buffered instanced geometry over that background
+   into the same offscreen texture with matching `orbit`, and Tier L hacks
+   (`lines`) draw their instanced SDF primitives into the offscreen texture
+   with the same orbit offset (inside the hack pass, or after the mesh pass
+   when combined with `mesh`).
 3. The limiter pass measures the average level on a sparse grid and eases a
    gain toward `care.max_average`.
 4. A care pass per output samples that output's part of the texture (using
@@ -212,11 +219,12 @@ measures:
 `cargo test` runs it for every hack against the shipped budget (it needs a
 GPU adapter; CI uses Mesa's lavapipe). Stateful and particle hacks run with
 their persistent ping-pong state (and particle storage buffer) from a fixed
-seed so accumulation and fades are measured, and instanced line/shape hacks
-(`lines`) run through the same orbit, limiter and care pass so tests verify
-that static lines, unfaded stateful hacks and unfaded particle hacks fail the
-dwell budget while moving or fading ones pass deterministically. `layover wear <hack>`
-runs it against your config and writes a heat map PNG.
+seed so accumulation and fades are measured, instanced line/shape hacks
+(`lines`) and depth-buffered 3D mesh hacks (`mesh`) run through the same orbit,
+limiter and care pass so tests verify that static lines, static meshes, unfaded
+stateful hacks and unfaded particle hacks fail the dwell budget while moving or
+fading ones pass deterministically and Z-occlude near geometry over far geometry.
+`layover wear <hack>` runs it against your config and writes a heat map PNG.
 
 ## Config
 

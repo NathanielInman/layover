@@ -3,7 +3,8 @@
 //! this file only feeds them.
 
 use crate::board::BoardData;
-use crate::{Hack, LineBlend};
+use crate::mesh::MeshVertex;
+use crate::{Hack, LineBlend, MeshCull};
 use anyhow::{Result, anyhow};
 use bytemuck::{Pod, Zeroable};
 use layover_core::config::Care;
@@ -94,6 +95,9 @@ struct Globals {
     fade: f32,
     frame: f32,
     line_count: f32,
+    mesh_draw: f32,
+    mesh_count: f32,
+    _pad: [f32; 2],
 }
 
 #[repr(C)]
@@ -125,6 +129,7 @@ const RAYMARCH: &str = include_str!("hacks/raymarch.wgsl");
 const FEEDBACK: &str = include_str!("hacks/feedback.wgsl");
 const PARTICLES: &str = include_str!("hacks/particles.wgsl");
 const LINES: &str = include_str!("hacks/lines.wgsl");
+const MESH: &str = include_str!("hacks/mesh.wgsl");
 
 /// The board binding, for hacks with `board: true`.
 const BOARD_BINDING: &str = r#"
@@ -203,9 +208,21 @@ fn fs_line(in: LineVsOut) -> @location(0) vec4<f32> {
     return line_fragment(in);
 }
 "#;
+const MESH_MAIN: &str = r#"
+@vertex
+fn vs_mesh(v: MeshVertexIn, @builtin(instance_index) ii: u32) -> MeshVsOut {
+    return mesh_vertex(v, mesh_camera(g.time), mesh_instance(mesh_draw_index(), ii, g.time));
+}
+
+@fragment
+fn fs_mesh(in: MeshVsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return mesh_fragment(in, mesh_camera(g.time), front_facing);
+}
+"#;
 
 const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const STATE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MAX_SUBSTEPS: u32 = 32;
 const PARTICLE_BYTES: u64 = 48;
 
@@ -234,6 +251,30 @@ struct ParticleBuffers {
 struct Slot {
     uniform: wgpu::Buffer,
     bind: wgpu::BindGroup,
+}
+
+struct DepthBuffer {
+    view: wgpu::TextureView,
+    size: [u32; 2],
+}
+
+struct MeshDrawRange {
+    first_index: u32,
+    index_count: u32,
+    base_vertex: i32,
+    instances: u32,
+}
+
+struct MeshBuffers {
+    vertex: wgpu::Buffer,
+    index: wgpu::Buffer,
+    draws: Vec<MeshDrawRange>,
+}
+
+struct MeshGlobals {
+    buf: wgpu::Buffer,
+    bg: wgpu::BindGroup,
+    capacity: usize,
 }
 
 pub struct Renderer {
@@ -275,6 +316,15 @@ pub struct Renderer {
     dim: f32,
     hack_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
     line_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
+    /// Tier M depth-buffered 3D mesh resources.
+    mesh_global_bgl: wgpu::BindGroupLayout,
+    mesh_layout: wgpu::PipelineLayout,
+    feedback_mesh_layout: wgpu::PipelineLayout,
+    board_mesh_layout: wgpu::PipelineLayout,
+    mesh_globals: Option<MeshGlobals>,
+    mesh_pipes: HashMap<&'static str, wgpu::RenderPipeline>,
+    mesh_buffers: HashMap<&'static str, MeshBuffers>,
+    depth: Option<DepthBuffer>,
     globals: wgpu::Buffer,
     limit: wgpu::Buffer,
     gain: wgpu::Buffer,
@@ -498,6 +548,36 @@ impl Renderer {
         let state_clamp_sampler = make_state_sampler("state clamp", wgpu::AddressMode::ClampToEdge);
         let state_repeat_sampler = make_state_sampler("state repeat", wgpu::AddressMode::Repeat);
 
+        let vert_frag = wgpu::ShaderStages::VERTEX | frag;
+        let mesh_global_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("mesh_globals"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: vert_frag,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: globals_size,
+                },
+                count: None,
+            }],
+        });
+        let mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mesh"),
+            bind_group_layouts: &[Some(&mesh_global_bgl)],
+            immediate_size: 0,
+        });
+        let feedback_mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("feedback mesh"),
+            bind_group_layouts: &[Some(&mesh_global_bgl), Some(&feedback_bgl)],
+            immediate_size: 0,
+        });
+        let board_mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("board mesh"),
+            bind_group_layouts: &[Some(&mesh_global_bgl), Some(&board_bgl)],
+            immediate_size: 0,
+        });
+
         let limit = buffer(device, "limit", size_of::<Limit>() as u64, uni);
         let gain = buffer(
             device,
@@ -600,6 +680,14 @@ impl Renderer {
             dim: 1.0,
             hack_pipes: HashMap::new(),
             line_pipes: HashMap::new(),
+            mesh_global_bgl,
+            mesh_layout,
+            feedback_mesh_layout,
+            board_mesh_layout,
+            mesh_globals: None,
+            mesh_pipes: HashMap::new(),
+            mesh_buffers: HashMap::new(),
+            depth: None,
             globals,
             limit,
             gain,
@@ -860,6 +948,99 @@ impl Renderer {
         })
     }
 
+    fn build_mesh_pipeline(
+        &self,
+        label: &str,
+        layout: &wgpu::PipelineLayout,
+        module: &wgpu::ShaderModule,
+        cull: MeshCull,
+    ) -> wgpu::RenderPipeline {
+        let cull_mode = match cull {
+            MeshCull::Back => Some(wgpu::Face::Back),
+            MeshCull::None => None,
+        };
+        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some("vs_mesh"),
+                compilation_options: Default::default(),
+                buffers: &[Some(MeshVertex::LAYOUT)],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module,
+                entry_point: Some("fs_mesh"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: OFFSCREEN_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
+    fn ensure_depth(&mut self, size: [u32; 2]) {
+        let size = [size[0].max(1), size[1].max(1)];
+        if self.depth.as_ref().is_some_and(|d| d.size == size) {
+            return;
+        }
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mesh depth"),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        self.depth = Some(DepthBuffer { view, size });
+    }
+
+    fn ensure_mesh_globals(&mut self, draws: usize) {
+        let needed = draws.max(1);
+        if self.mesh_globals.as_ref().is_some_and(|mg| mg.capacity >= needed) {
+            return;
+        }
+        let capacity = needed.next_power_of_two();
+        let globals_size = wgpu::BufferSize::new(size_of::<Globals>() as u64);
+        let uni = wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST;
+        let buf = buffer(&self.device, "mesh_globals", (self.step_stride * capacity) as u64, uni);
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh_globals"),
+            layout: &self.mesh_global_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buf,
+                    offset: 0,
+                    size: globals_size,
+                }),
+            }],
+        });
+        self.mesh_globals = Some(MeshGlobals { buf, bg, capacity });
+    }
+
     /// Compile a hack ahead of time. A shader error comes back as an error
     /// instead of taking the process down.
     pub fn prepare(&mut self, hack: &'static Hack) -> Result<()> {
@@ -877,6 +1058,38 @@ impl Renderer {
         {
             return Err(anyhow!("hack {} has zero line instances", hack.id));
         }
+        let prepared_mesh = if let Some(mesh_spec) = hack.mesh {
+            if mesh_spec.draws.is_empty() {
+                return Err(anyhow!("hack {} has no mesh draws", hack.id));
+            }
+            let mut vertices = Vec::new();
+            let mut indices = Vec::new();
+            let mut draws = Vec::with_capacity(mesh_spec.draws.len());
+            for (di, d) in mesh_spec.draws.iter().enumerate() {
+                if d.instances == 0 {
+                    return Err(anyhow!("hack {} mesh draw {} has zero instances", hack.id, di));
+                }
+                let data = d.mesh.build();
+                data.validate()?;
+                let base_vertex = i32::try_from(vertices.len())
+                    .map_err(|_| anyhow!("hack {} mesh vertex buffer overflow", hack.id))?;
+                let first_index = u32::try_from(indices.len())
+                    .map_err(|_| anyhow!("hack {} mesh index buffer overflow", hack.id))?;
+                let index_count = u32::try_from(data.indices.len())
+                    .map_err(|_| anyhow!("hack {} mesh index count overflow", hack.id))?;
+                vertices.extend_from_slice(&data.vertices);
+                indices.extend_from_slice(&data.indices);
+                draws.push(MeshDrawRange {
+                    first_index,
+                    index_count,
+                    base_vertex,
+                    instances: d.instances,
+                });
+            }
+            Some((mesh_spec.cull, vertices, indices, draws))
+        } else {
+            None
+        };
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let board = if hack.board {
             format!(
@@ -891,6 +1104,7 @@ impl Renderer {
         let feedback = if hack.feedback.is_some() { FEEDBACK } else { "" };
         let particles = if hack.particles.is_some() { PARTICLES } else { "" };
         let lines = if hack.lines.is_some() { LINES } else { "" };
+        let mesh = if hack.mesh.is_some() { MESH } else { "" };
         let step_main = if hack.particles.is_some() {
             format!("{PARTICLE_MAIN}\n{RESOLVE_MAIN}")
         } else if hack.feedback.is_some() {
@@ -899,8 +1113,9 @@ impl Renderer {
             String::new()
         };
         let line_main = if hack.lines.is_some() { LINE_MAIN } else { "" };
+        let mesh_main = if hack.mesh.is_some() { MESH_MAIN } else { "" };
         let source = format!(
-            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{particles}\n{lines}\n{}\n{step_main}\n{HACK_MAIN}\n{line_main}",
+            "{PRELUDE}\n{raymarch}\n{board}\n{feedback}\n{particles}\n{lines}\n{mesh}\n{}\n{step_main}\n{HACK_MAIN}\n{line_main}\n{mesh_main}",
             hack.source
         );
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -948,6 +1163,33 @@ impl Renderer {
         let pipe = self.build_pipeline(hack.id, hack_layout, &module, "fs_hack", OFFSCREEN_FORMAT);
         let line_pipe =
             hack.lines.map(|l| self.build_line_pipeline(hack.id, hack_layout, &module, l.blend));
+        let mesh_layout = if hack.board {
+            &self.board_mesh_layout
+        } else if hack.feedback.is_some() {
+            &self.feedback_mesh_layout
+        } else {
+            &self.mesh_layout
+        };
+        let mesh_res = prepared_mesh.map(|(cull, vertices, indices, draws)| {
+            let v_bytes = bytemuck::cast_slice(&vertices);
+            let i_bytes = bytemuck::cast_slice(&indices);
+            let vertex = buffer(
+                &self.device,
+                "mesh vertices",
+                v_bytes.len() as u64,
+                wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            );
+            let index = buffer(
+                &self.device,
+                "mesh indices",
+                i_bytes.len() as u64,
+                wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            );
+            self.queue.write_buffer(&vertex, 0, v_bytes);
+            self.queue.write_buffer(&index, 0, i_bytes);
+            let mesh_pipe = self.build_mesh_pipeline(hack.id, mesh_layout, &module, cull);
+            (mesh_pipe, MeshBuffers { vertex, index, draws })
+        });
         if let Some(err) = pollster::block_on(scope.pop()) {
             return Err(anyhow!("hack {} does not compile: {err}", hack.id));
         }
@@ -962,6 +1204,10 @@ impl Renderer {
         }
         if let Some(line_pipe) = line_pipe {
             self.line_pipes.insert(hack.id, line_pipe);
+        }
+        if let Some((mesh_pipe, mesh_bufs)) = mesh_res {
+            self.mesh_pipes.insert(hack.id, mesh_pipe);
+            self.mesh_buffers.insert(hack.id, mesh_bufs);
         }
         self.hack_pipes.insert(hack.id, pipe);
         Ok(())
@@ -1041,6 +1287,9 @@ impl Renderer {
                     fade,
                     frame: (self.state_frame + i as u64) as f32,
                     line_count: 0.0,
+                    mesh_draw: 0.0,
+                    mesh_count: 0.0,
+                    _pad: [0.0; 2],
                 };
                 let start = i as usize * self.step_stride;
                 buf[start..start + size_of::<Globals>()].copy_from_slice(bytemuck::bytes_of(&g));
@@ -1119,17 +1368,20 @@ impl Renderer {
             self.state_hack = None;
         }
 
-        let off = self.offscreen.as_ref().expect("offscreen is ready");
+        let orbit = self.care.orbit(frame.phase, self.canvas[1]);
         let globals = Globals {
             canvas: self.canvas,
-            target_size: [off.size[0] as f32, off.size[1] as f32],
-            orbit: self.care.orbit(frame.phase, self.canvas[1]),
+            target_size: [off_size[0] as f32, off_size[1] as f32],
+            orbit,
             time: frame.t,
             seed: frame.seed,
             dt: frame.dt.max(0.0),
             fade: 1.0,
             frame: self.state_frame as f32,
             line_count: frame.hack.lines.map_or(0.0, |l| l.count as f32),
+            mesh_draw: 0.0,
+            mesh_count: 0.0,
+            _pad: [0.0; 2],
         };
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
         let limit = Limit {
@@ -1144,6 +1396,7 @@ impl Renderer {
         self.aa_on = self.antialias && !frame.hack.text_heavy;
 
         {
+            let off = self.offscreen.as_ref().expect("offscreen is ready");
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hack"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1174,14 +1427,116 @@ impl Renderer {
                 pass.set_bind_group(1, fb_bg, &[]);
             }
             pass.draw(0..3, 0..1);
-            if let Some(lines) = frame.hack.lines
+            if frame.hack.mesh.is_none()
+                && let Some(lines) = frame.hack.lines
                 && lines.count > 0
             {
                 pass.set_pipeline(&self.line_pipes[frame.hack.id]);
                 pass.draw(0..4, 0..lines.count);
             }
         }
+        if frame.hack.mesh.is_some() {
+            let draw_count = self.mesh_buffers[frame.hack.id].draws.len();
+            self.ensure_depth(off_size);
+            self.ensure_mesh_globals(draw_count);
+            let mb = &self.mesh_buffers[frame.hack.id];
+            let mg = self.mesh_globals.as_ref().expect("mesh_globals is ready");
+            let depth = self.depth.as_ref().expect("depth is ready");
+            let mut mbuf = vec![0u8; draw_count * self.step_stride];
+            for (d, dr) in mb.draws.iter().enumerate() {
+                let dg =
+                    Globals { mesh_draw: d as f32, mesh_count: dr.instances as f32, ..globals };
+                let start = d * self.step_stride;
+                mbuf[start..start + size_of::<Globals>()].copy_from_slice(bytemuck::bytes_of(&dg));
+            }
+            self.queue.write_buffer(&mg.buf, 0, &mbuf);
+
+            let off = self.offscreen.as_ref().expect("offscreen is ready");
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("mesh"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &off.view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.mesh_pipes[frame.hack.id]);
+                pass.set_vertex_buffer(0, mb.vertex.slice(..));
+                pass.set_index_buffer(mb.index.slice(..), wgpu::IndexFormat::Uint32);
+                if frame.hack.board {
+                    pass.set_bind_group(1, &self.board_bg, &[]);
+                } else if let Some(fb) = frame.hack.feedback {
+                    let state = self.state.as_ref().expect("state is ready");
+                    let fb_bg = if fb.wrap {
+                        &state.repeat_bgs[self.state_front]
+                    } else {
+                        &state.clamp_bgs[self.state_front]
+                    };
+                    pass.set_bind_group(1, fb_bg, &[]);
+                }
+                for (d, dr) in mb.draws.iter().enumerate() {
+                    let dyn_off = (d * self.step_stride) as u32;
+                    pass.set_bind_group(0, &mg.bg, &[dyn_off]);
+                    pass.draw_indexed(
+                        dr.first_index..dr.first_index + dr.index_count,
+                        dr.base_vertex,
+                        0..dr.instances,
+                    );
+                }
+            }
+            if let Some(lines) = frame.hack.lines
+                && lines.count > 0
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("lines"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &off.view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(&self.line_pipes[frame.hack.id]);
+                pass.set_bind_group(0, &self.hack_bg, &[]);
+                if frame.hack.board {
+                    pass.set_bind_group(1, &self.board_bg, &[]);
+                } else if let Some(fb) = frame.hack.feedback {
+                    let state = self.state.as_ref().expect("state is ready");
+                    let fb_bg = if fb.wrap {
+                        &state.repeat_bgs[self.state_front]
+                    } else {
+                        &state.clamp_bgs[self.state_front]
+                    };
+                    pass.set_bind_group(1, fb_bg, &[]);
+                }
+                pass.draw(0..4, 0..lines.count);
+            }
+        }
         {
+            let off = self.offscreen.as_ref().expect("offscreen is ready");
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("limiter"),
                 timestamp_writes: None,

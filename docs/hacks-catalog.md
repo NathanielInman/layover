@@ -18,12 +18,16 @@ opts into Tier S (`feedback: Some(...)`), which steps ping-pong `Rgba16Float`
 state textures with a per-hack fade before drawing, Tier P
 (`particles: Some(...)`), which runs persistent compute particles and atomic
 splats into the feedback canvas for attractors, flames, fireworks and swarms,
-or Tier L (`lines: Some(...)`), which renders instanced SDF line and shape
-quads directly into the offscreen canvas before the care pass and limiter.
+Tier L (`lines: Some(...)`), which renders instanced SDF line and shape
+quads directly into the offscreen canvas before the care pass and limiter, or
+Tier M (`mesh: Some(...)`), which renders depth-buffered instanced 3D triangle
+meshes (`Depth32Float`) over the hack background before lines, the care pass
+and the limiter.
 The care pass and the limiter run after it. That covers anything a pixel can
 work out from time and position alone (fields, waves, fractals, tunnels,
-raymarched 3D), continuous state fields, compute particle systems and curves
-or geometric line art. The Departure Board shows a glyph atlas works too.
+raymarched 3D), continuous state fields, compute particle systems, curves
+or geometric line art, and depth-buffered 3D scenes. The Departure Board shows
+a glyph atlas works too.
 
 Most of xscreensaver is not like that. Its hacks draw onto a canvas that
 keeps what was drawn, move thousands of particles, or render meshes. Each tier
@@ -36,7 +40,7 @@ below names what the renderer would gain to cover it.
 | S | state: ping-pong feedback textures that persist between frames | works today |
 | P | particles: storage buffers and a compute pass | works today |
 | L | lines and shapes: instanced quads with SDF edges | works today |
-| M | meshes: vertex buffers and a depth buffer | engine task |
+| M | meshes: vertex buffers and a depth buffer | works today |
 | T | text: the glyph atlas the Departure Board already has | works today |
 | I | an image source: a screen grab or a picture folder | needs a decision |
 | X | not ported (reason given) | |
