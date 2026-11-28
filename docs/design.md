@@ -275,6 +275,14 @@ defaults.
 - Logs go to `$XDG_STATE_HOME/layover/daemon.log` and `board.log`
   (`$LAYOVER_STATE_DIR` overrides). `layover wear` keeps its last results in
   `wear.json` beside them.
+- `layover thumbs` draws the drawer's thumbnails into
+  `$XDG_CACHE_HOME/layover/thumbs` (`$LAYOVER_CACHE_DIR` overrides): per
+  hack a frame at 0:30, a settled frame at 2:30 and a 4 second loop at 8 fps
+  as a strip, 384 pixels wide in the desktop's shape (every Hyprland monitor
+  together; 16:9 elsewhere). They come out of the same care pass as the
+  saver from a fixed seed, lifted by `1 / care.max_drive` so they read on a
+  lit drawer. `index.json` keys each hack on its shader, the shared shaders
+  and the canvas, so only stale ones are drawn again.
 
 | Crate | Role |
 | --- | --- |

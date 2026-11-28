@@ -34,6 +34,24 @@ pub fn config_dir() -> PathBuf {
         .unwrap_or_else(|| home().join(".config/layover"))
 }
 
+/// `$LAYOVER_CACHE_DIR`, else `$XDG_CACHE_HOME/layover`, else
+/// `~/.cache/layover`.
+pub fn cache_dir() -> PathBuf {
+    env_dir("LAYOVER_CACHE_DIR")
+        .or_else(|| env_dir("XDG_CACHE_HOME").map(|d| d.join("layover")))
+        .unwrap_or_else(|| home().join(".cache/layover"))
+}
+
+/// The drawer's thumbnails, written by `layover thumbs`.
+pub fn thumbs_dir() -> PathBuf {
+    cache_dir().join("thumbs")
+}
+
+/// A wear heat map, written by `layover wear`.
+pub fn heat_map(id: &str) -> PathBuf {
+    state_dir().join("wear").join(format!("{id}.png"))
+}
+
 pub fn config_file() -> PathBuf {
     config_dir().join("layover.toml")
 }

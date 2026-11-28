@@ -12,5 +12,6 @@ pub mod paths;
 pub mod protocol;
 pub mod span;
 pub mod state;
+pub mod thumbs;
 pub mod waybar;
 pub mod wear_cache;

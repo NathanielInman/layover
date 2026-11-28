@@ -131,6 +131,23 @@ const PARTICLES: &str = include_str!("hacks/particles.wgsl");
 const LINES: &str = include_str!("hacks/lines.wgsl");
 const MESH: &str = include_str!("hacks/mesh.wgsl");
 
+/// Every shader a hack is built with besides its own: a change here changes
+/// how every hack looks, so cached thumbnails key on it.
+pub fn shared_source_key() -> String {
+    [
+        PRELUDE,
+        RAYMARCH,
+        FEEDBACK,
+        PARTICLES,
+        LINES,
+        MESH,
+        include_str!("limiter.wgsl"),
+        include_str!("care.wgsl"),
+    ]
+    .concat()
+        + &crate::board::font_wgsl()
+}
+
 /// The board binding, for hacks with `board: true`.
 const BOARD_BINDING: &str = r#"
 struct Board {

@@ -4,6 +4,7 @@ pub mod board;
 pub mod gpu;
 pub mod mesh;
 pub mod renderer;
+pub mod thumbs;
 pub mod wear;
 
 pub use mesh::{MeshData, MeshSource, MeshVertex};

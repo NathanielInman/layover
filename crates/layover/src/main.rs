@@ -44,6 +44,8 @@ Usage:
                                  show hacks now, without the daemon
   layover wear [<id>...] [--minutes <n>] [--out <dir>]
                                  run the wear test against your config and write heat maps
+  layover thumbs [<id>...] [--force]
+                                 draw the drawer's thumbnails (only stale ones unless --force)
   layover --version
 
 The config is ~/.config/layover/layover.toml; `layover check` explains it.
@@ -130,6 +132,7 @@ fn run(args: &[String]) -> Result<i32> {
         }
         "rotation" => rotation_cmd(rest),
         "wear" => wear_cmd(rest),
+        "thumbs" => thumbs_cmd(rest),
         "-V" | "--version" | "version" => {
             println!("layover {}", env!("CARGO_PKG_VERSION"));
             Ok(0)
@@ -286,6 +289,55 @@ fn saver_cmd(rest: &[String]) -> Result<i32> {
     }
     .map_err(|e| anyhow!(e))?;
     saver::run(&cfg, saver::Options { hacks, run_for })?;
+    Ok(0)
+}
+
+/// Thumbnails this wide, in pixels.
+const THUMB_WIDTH: u32 = 384;
+
+/// `layover thumbs`: draws each hack's pictures for the drawer into the
+/// cache, skipping ones already drawn from the same shader and canvas.
+fn thumbs_cmd(rest: &[String]) -> Result<i32> {
+    use layover_core::thumbs::{Shot, ThumbIndex, canvas_from_hyprland, size_for};
+    use layover_hacks::thumbs;
+    let cfg = load_config()?;
+    let force = rest.iter().any(|a| a == "--force");
+    let ids: Vec<String> = rest.iter().filter(|a| !a.starts_with("--")).cloned().collect();
+    let hacks = layover_hacks::rotation(&ids).map_err(|e| anyhow!(e))?;
+    let canvas = daemon::hyprland_request("j/monitors")
+        .and_then(|j| canvas_from_hyprland(&j))
+        .unwrap_or([2560.0, 1440.0]);
+    let size = size_for(canvas, THUMB_WIDTH);
+    let dir = paths::thumbs_dir();
+    let mut index = ThumbIndex::load(&dir).unwrap_or_default();
+    if index.canvas != canvas || index.size != size {
+        index = ThumbIndex { canvas, size, ..Default::default() };
+    }
+    index.loop_frames = thumbs::LOOP_FRAMES;
+    index.loop_fps = thumbs::LOOP_FPS;
+    let todo: Vec<_> = hacks
+        .into_iter()
+        .filter(|h| force || !index.fresh(&dir, h.id, &thumbs::key(h, canvas, size)))
+        .collect();
+    if todo.is_empty() {
+        println!("every thumbnail is up to date ({})", dir.display());
+        return Ok(0);
+    }
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let gpu = layover_hacks::gpu::Gpu::headless()?;
+    let care = CareSettings::from_config(&cfg.care);
+    for hack in todo {
+        let t = thumbs::render(&gpu, hack, &care, size, canvas)?;
+        for (shot, data) in
+            [(Shot::Early, &t.early), (Shot::Still, &t.still), (Shot::Loop, &t.strip)]
+        {
+            thumbs::write_png(&ThumbIndex::file(&dir, hack.id, shot), data, size[0])?;
+        }
+        index.hacks.insert(hack.id.into(), thumbs::key(hack, canvas, size));
+        // Saved after each hack, so the drawer fills in as they come.
+        index.save(&dir)?;
+        println!("{}", hack.id);
+    }
     Ok(0)
 }
 

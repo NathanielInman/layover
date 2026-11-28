@@ -191,6 +191,7 @@ layover rotation <id> never|sometimes|often
 layover saver --hack starfield --for 20s
                                show a hack now, without the daemon
 layover wear [<id>...]         run the wear test against your config and write heat maps
+layover thumbs [--force]       draw the drawer's thumbnails (the drawer runs it when they're stale)
 ```
 
 ## Hacks

@@ -42,9 +42,9 @@ The wear tests need a GPU adapter. CI installs Mesa's lavapipe. Set
 ## Isolation
 
 The desk you work on may run an installed Layover. Point a dev build
-elsewhere with `LAYOVER_RUNTIME_DIR`, `LAYOVER_STATE_DIR` and
-`LAYOVER_CONFIG_DIR`. `layover saver --hack <id> --for 20s` shows one hack and
-exits without touching the daemon.
+elsewhere with `LAYOVER_RUNTIME_DIR`, `LAYOVER_STATE_DIR`,
+`LAYOVER_CONFIG_DIR` and `LAYOVER_CACHE_DIR`. `layover saver --hack <id>
+--for 20s` shows one hack and exits without touching the daemon.
 
 ## Rules
 
