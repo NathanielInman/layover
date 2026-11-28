@@ -44,6 +44,8 @@ pub enum Msg {
     Feed(Feed, Option<LampLine>),
     /// The saver subscribed to the line.
     LineWatch(Sender<String>),
+    /// Audition started (true) or its connection closed (false).
+    Audition(bool),
 }
 
 const TICK: Duration = Duration::from_secs(5);
@@ -229,7 +231,11 @@ impl Daemon {
                     return Ok(());
                 }
                 let event = match req {
-                    Request::Status | Request::Watch | Request::Board | Request::Line => None,
+                    Request::Status
+                    | Request::Watch
+                    | Request::Board
+                    | Request::Line
+                    | Request::Audition => None,
                     Request::Rotation { .. } | Request::Next { .. } => None,
                     Request::Hold { secs } => Some(Event::Hold { secs }),
                     Request::Extend { secs } => Some(Event::Extend { secs }),
@@ -287,6 +293,10 @@ impl Daemon {
                     self.step(Event::Cheap { why: desk.cheap.clone() });
                 }
                 self.desk = desk;
+            }
+            Msg::Audition(on) => {
+                log(if on { "audition started" } else { "audition ended" });
+                self.step(Event::Audition { on });
             }
             Msg::LineWatch(sender) => {
                 if sender.send(self.line_update()).is_ok() {
@@ -745,6 +755,15 @@ fn serve_client(stream: UnixStream, tx: Sender<Msg>) -> Result<()> {
                 writeln!(writer, "{lamp}")?;
                 writer.flush()?;
             }
+            return Ok(());
+        }
+        if req == Request::Audition {
+            // Held until the audition's connection closes.
+            tx.send(Msg::Audition(true))?;
+            let mut buf = [0u8; 64];
+            let mut r = writer.try_clone()?;
+            while matches!(r.read(&mut buf), Ok(n) if n > 0) {}
+            tx.send(Msg::Audition(false))?;
             return Ok(());
         }
         let (rtx, rrx) = mpsc::channel();

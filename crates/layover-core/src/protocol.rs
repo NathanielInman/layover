@@ -43,6 +43,8 @@ pub enum Request {
     Extend {
         secs: i64,
     },
+    /// Audition is running: hold the line until this connection closes.
+    Audition,
     /// Start the next run with this hack, or with no hack skip the one
     /// that would come next.
     Next {

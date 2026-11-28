@@ -2,6 +2,7 @@
 //! renderer, until any input or SIGTERM. The daemon starts it; `layover
 //! saver --hack <id> --for 20s` previews one hack by hand.
 
+use crate::audition::Audition;
 use anyhow::{Context, Result, anyhow, bail};
 use layover_core::config::Config;
 use layover_core::feeds::{self, LineUpdate, Row};
@@ -37,6 +38,7 @@ use smithay_client_toolkit::{
             LayerSurfaceConfigure,
         },
     },
+    shm::{Shm, ShmHandler, slot::SlotPool},
 };
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -69,6 +71,22 @@ const MAX_DISPATCH_WAIT: Duration = Duration::from_millis(100);
 pub struct Options {
     pub hacks: Vec<&'static Hack>,
     pub run_for: Option<Duration>,
+    /// Audition: step through `hacks` by key with a strip saying where you
+    /// are, instead of ending on any input.
+    pub audition: bool,
+}
+
+/// Audition's strip: a small layer surface over the saver, drawn on the CPU.
+struct Strip {
+    layer: LayerSurface,
+    pool: SlotPool,
+    size: (u32, u32),
+    /// The output's width, to center the strip.
+    out_w: i32,
+    configured: bool,
+    /// What was drawn last: text, level and drift, so an unchanged strip
+    /// is not drawn again.
+    last: Option<(String, u8, i32)>,
 }
 
 struct Out {
@@ -337,6 +355,10 @@ struct Saver {
     pointer_from: Option<(f64, f64)>,
     exit: Option<&'static str>,
     failed: Option<anyhow::Error>,
+    audition: Option<Audition>,
+    strip: Option<Strip>,
+    shm: Option<Shm>,
+    last_axis: Instant,
     /// The line's rows with when each last changed (`HH:MM`, hack seconds).
     rows: Vec<(Row, String, f32)>,
     clock: String,
@@ -393,12 +415,22 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         pointer_from: None,
         exit: None,
         failed: None,
+        audition: None,
+        strip: None,
+        shm: None,
+        last_axis: started,
         rows: Vec::new(),
         clock: String::new(),
         header_changed: 0.0,
         board_dirty: true,
         cheap: false,
     };
+    if opts.audition {
+        let weights = state.hacks.iter().map(|h| cfg.saver.weight(h.id)).collect();
+        state.audition = Some(Audition::new(state.hacks.clone(), weights, started));
+        state.shm = Some(Shm::bind(&globals, &qh).context("the compositor has no wl_shm")?);
+        hold_for_audition();
+    }
     // Learn the outputs and where they sit.
     queue.roundtrip(&mut state).context("talking to the compositor")?;
     queue.roundtrip(&mut state).context("talking to the compositor")?;
@@ -448,6 +480,9 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         state.pace.push(OutputSlot { refresh_mhz, ..Default::default() });
     }
     state.layout_canvas();
+    if state.audition.is_some() {
+        state.strip = Some(make_strip(&state, &compositor, &layer_shell, &qh)?);
+    }
 
     let mut event_loop: EventLoop<Saver> =
         EventLoop::try_new().context("creating the event loop")?;
@@ -499,6 +534,103 @@ pub fn run(cfg: &Config, opts: Options) -> Result<()> {
         o.gpu_surface = None;
     }
     Ok(())
+}
+
+/// Audition's strip on the first output: anchored to the bottom, taking no
+/// input, so a click lands on the saver and ends it.
+fn make_strip(
+    state: &Saver,
+    compositor: &CompositorState,
+    layer_shell: &LayerShell,
+    qh: &QueueHandle<Saver>,
+) -> Result<Strip> {
+    let shm = state.shm.as_ref().ok_or_else(|| anyhow!("no wl_shm"))?;
+    let out = state.outs.first().ok_or_else(|| anyhow!("no output for the strip"))?;
+    let widest = layover_hacks::HACKS
+        .iter()
+        .map(|h| format!("< {}  {n}/{n} >", h.name, n = layover_hacks::HACKS.len()))
+        .chain(state.audition.iter().flat_map(|a| a.lines().into_iter().map(|l| l.text)))
+        .max_by_key(|t| t.chars().count())
+        .unwrap_or_default();
+    let probe = [
+        crate::hud::Line { text: widest, color: [0; 3] },
+        crate::hud::Line { text: String::new(), color: [0; 3] },
+        crate::hud::Line { text: String::new(), color: [0; 3] },
+    ];
+    let (w, h) = crate::hud::size(&probe);
+    let (w, h) = (w as u32 + 2 * STRIP_DRIFT as u32, h as u32);
+    let surface = compositor.create_surface(qh);
+    let layer = layer_shell.create_layer_surface(
+        qh,
+        surface,
+        Layer::Overlay,
+        Some("layover-audition"),
+        Some(&out.output),
+    );
+    layer.set_anchor(Anchor::BOTTOM | Anchor::LEFT);
+    layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+    layer.set_exclusive_zone(-1);
+    layer.set_size(w, h);
+    layer.set_margin(0, 0, STRIP_BOTTOM, ((out.logical[2] - w as i32) / 2).max(0));
+    let empty = smithay_client_toolkit::compositor::Region::new(compositor)
+        .context("creating the strip's input region")?;
+    layer.wl_surface().set_input_region(Some(empty.wl_region()));
+    layer.commit();
+    let pool = SlotPool::new((w * h * 4) as usize, shm).context("creating the strip's buffer")?;
+    Ok(Strip { layer, pool, size: (w, h), out_w: out.logical[2], configured: false, last: None })
+}
+
+/// The strip's drift, either way, in pixels: it never sits still.
+const STRIP_DRIFT: i32 = 24;
+/// The strip's distance from the bottom edge.
+const STRIP_BOTTOM: i32 = 56;
+
+/// Holds the idle line while Audition runs: the daemon keeps the hold until
+/// this connection closes, which it does when the process ends.
+fn hold_for_audition() {
+    std::thread::spawn(|| {
+        let Ok(mut s) = UnixStream::connect(layover_core::paths::socket()) else { return };
+        if writeln!(s, r#"{{"cmd":"audition"}}"#).is_err() {
+            return;
+        }
+        let mut sink = String::new();
+        let _ = std::io::Read::read_to_string(&mut s, &mut sink);
+    });
+}
+
+/// Writes a weight Audition changed, through the daemon when it runs and
+/// into the config when it doesn't.
+fn write_weight(change: crate::audition::Change) {
+    std::thread::spawn(move || {
+        let req = layover_core::protocol::Request::Rotation {
+            hack: change.id.into(),
+            weight: change.weight,
+        };
+        let via_daemon = UnixStream::connect(layover_core::paths::socket()).and_then(|mut s| {
+            writeln!(s, "{}", serde_json::to_string(&req).unwrap_or_default())?;
+            let mut line = String::new();
+            BufReader::new(s).read_line(&mut line)?;
+            Ok(line)
+        });
+        let result = match via_daemon {
+            Ok(line) => match serde_json::from_str::<layover_core::protocol::Reply>(&line) {
+                Ok(layover_core::protocol::Reply::Error { error }) => Err(anyhow!(error)),
+                _ => Ok(()),
+            },
+            Err(_) => {
+                let path = layover_core::paths::config_file();
+                layover_core::config_edit::plan_weight(&path, change.id, change.weight).and_then(
+                    |(text, cfg)| {
+                        layover_hacks::run_order(&cfg.saver).map_err(|e| anyhow!(e))?;
+                        layover_core::config_edit::write(&path, &text)
+                    },
+                )
+            }
+        };
+        if let Err(e) = result {
+            eprintln!("layover audition: couldn't set {}: {e:#}", change.id);
+        }
+    });
 }
 
 /// Ask the daemon for the line: the board's rows and cheap mode, now and on
@@ -640,7 +772,10 @@ impl Saver {
             renderer.set_antialias(self.cfg.saver.antialias);
             renderer.reset_limiter();
             renderer.reset_state();
-            for hack in &self.hacks {
+            // Audition prepares each hack as it comes up: building all of
+            // them first would hold the first picture back.
+            let upfront = if self.audition.is_some() { 1 } else { self.hacks.len() };
+            for hack in self.hacks.iter().take(upfront) {
                 renderer.prepare(hack)?;
             }
             self.renderer = Some(renderer);
@@ -702,8 +837,21 @@ impl Saver {
         }
         let dt = now.duration_since(self.last_frame).as_secs_f32().min(1.0);
         self.last_frame = now;
-        let elapsed = now.duration_since(self.started).as_secs_f32();
-        let (hack, fade) = layover_hacks::showing(&self.hacks, &self.cfg.care, elapsed);
+        let (hack, fade, elapsed) = match self.audition.as_mut() {
+            Some(a) => {
+                if a.tick(now) {
+                    self.exit = Some("Audition ended: two minutes without a key");
+                    return;
+                }
+                let on = now.duration_since(a.since).as_secs_f32();
+                (a.hack(), (on / crate::audition::FADE_IN).min(1.0), on)
+            }
+            None => {
+                let elapsed = now.duration_since(self.started).as_secs_f32();
+                let (hack, fade) = layover_hacks::showing(&self.hacks, &self.cfg.care, elapsed);
+                (hack, fade, elapsed)
+            }
+        };
         if hack.board {
             self.refresh_board();
         }
@@ -716,6 +864,62 @@ impl Saver {
                 self.pacer.on_presented(&self.pace, presented, fps, Instant::now());
             }
             Err(e) => self.failed = Some(e),
+        }
+        self.draw_strip(now);
+    }
+
+    /// Redraws Audition's strip when its text, level or drift changed.
+    fn draw_strip(&mut self, now: Instant) {
+        let (Some(a), Some(strip)) = (self.audition.as_ref(), self.strip.as_mut()) else { return };
+        if !strip.configured {
+            return;
+        }
+        let lines = a.lines();
+        let level = a.strip_level(now);
+        let t = now.duration_since(self.started).as_secs_f32();
+        let drift = (STRIP_DRIFT as f32 * (t * std::f32::consts::TAU / 41.0).sin()).round() as i32;
+        let text: String = lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("|");
+        let key = (text, (level * 32.0).round() as u8, if level > 0.0 { drift } else { 0 });
+        if strip.last.as_ref() == Some(&key) {
+            return;
+        }
+        let (w, h) = strip.size;
+        let pixels = crate::hud::draw(&lines, w as usize, h as usize, level);
+        let Ok((buffer, canvas)) = strip.pool.create_buffer(
+            w as i32,
+            h as i32,
+            w as i32 * 4,
+            wayland_client::protocol::wl_shm::Format::Argb8888,
+        ) else {
+            return;
+        };
+        canvas.copy_from_slice(&pixels);
+        let surface = strip.layer.wl_surface();
+        surface.damage_buffer(0, 0, w as i32, h as i32);
+        if buffer.attach_to(surface).is_err() {
+            return;
+        }
+        let left = ((strip.out_w - w as i32) / 2 + key.2).max(0);
+        let bottom = STRIP_BOTTOM + (6.0 * (t * std::f32::consts::TAU / 29.0).sin()) as i32;
+        strip.layer.set_margin(0, 0, bottom, left);
+        strip.layer.commit();
+        strip.last = Some(key);
+    }
+
+    /// A key in Audition.
+    fn audition_key(&mut self, key: u32) {
+        let now = Instant::now();
+        let action = crate::audition::action(key);
+        if action == crate::audition::Action::Done {
+            self.exit = Some("Audition done");
+            return;
+        }
+        let Some(a) = self.audition.as_mut() else { return };
+        if let Some(change) = a.key(action, now) {
+            write_weight(change);
+        }
+        if let Some(s) = self.strip.as_mut() {
+            s.last = None;
         }
     }
 
@@ -886,6 +1090,13 @@ impl LayerShellHandler for Saver {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
+        if let Some(s) = self.strip.as_mut()
+            && &s.layer == layer
+        {
+            s.configured = true;
+            s.last = None;
+            return;
+        }
         let Some(idx) = self.outs.iter().position(|o| &o.layer == layer) else { return };
         let (w, h) = configure.new_size;
         let (w, h) = if w == 0 || h == 0 {
@@ -954,6 +1165,27 @@ impl PointerHandler for Saver {
                     pointer.set_cursor(serial, None, 0, 0);
                     self.pointer_from = Some(event.position);
                 }
+                PointerEventKind::Motion { .. } if self.audition.is_some() => {}
+                PointerEventKind::Axis { vertical, .. } if self.audition.is_some() => {
+                    // One step per flick of the wheel, not per notch.
+                    let now = Instant::now();
+                    if vertical.absolute != 0.0
+                        && now.duration_since(self.last_axis) > Duration::from_millis(300)
+                    {
+                        self.last_axis = now;
+                        let key = if vertical.absolute > 0.0 {
+                            crate::audition::keys::RIGHT
+                        } else {
+                            crate::audition::keys::LEFT
+                        };
+                        self.audition_key(key);
+                    }
+                }
+                PointerEventKind::Press { .. } if self.audition.is_some() => {
+                    if self.started.elapsed() >= GRACE {
+                        self.exit = Some("Audition done: a click");
+                    }
+                }
                 PointerEventKind::Motion { .. } => {
                     let from = *self.pointer_from.get_or_insert(event.position);
                     let (dx, dy) = (event.position.0 - from.0, event.position.1 - from.1);
@@ -984,16 +1216,27 @@ impl Dispatch2<wl_keyboard::WlKeyboard, Saver> for KeyWatch {
         _: &QueueHandle<Saver>,
     ) {
         if let wl_keyboard::Event::Key {
+            key,
             state: wayland_client::WEnum::Value(wl_keyboard::KeyState::Pressed),
             ..
         } = event
         {
-            state.wake("a key");
+            if state.audition.is_some() {
+                state.audition_key(key);
+            } else {
+                state.wake("a key");
+            }
         }
     }
 }
 
 delegate_registry!(Saver);
+
+impl ShmHandler for Saver {
+    fn shm_state(&mut self) -> &mut Shm {
+        self.shm.as_mut().expect("shm is bound in Audition, the only time it is used")
+    }
+}
 
 impl ProvidesRegistryState for Saver {
     fn registry(&mut self) -> &mut RegistryState {

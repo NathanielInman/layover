@@ -1,8 +1,10 @@
 //! `layover`: the daemon, the saver, the waybar module and the CLI.
 
+mod audition;
 mod daemon;
 mod doctor;
 mod feeds;
+mod hud;
 mod log;
 mod saver;
 mod wayland;
@@ -42,6 +44,9 @@ Usage:
   layover hacks                  list the hacks (* in the rotation, ** starred)
   layover rotation <id> never|sometimes|often
                                  take a hack out of the rotation, put it back, or star it
+  layover audition [--from <id>] step through every hack on the screen: arrows step,
+                                 k keeps one in the rotation or leaves it out, s stars it,
+                                 space pauses, Esc or a click ends it
   layover saver [--hack <id>]... [--for <duration>]
                                  show hacks now, without the daemon
   layover wear [<id>...] [--minutes <n>] [--out <dir>]
@@ -83,6 +88,24 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(0)
         }
         "saver" => saver_cmd(rest),
+        "audition" => {
+            let cfg = load_config()?;
+            let from = match rest {
+                [] => None,
+                [flag, id] if flag == "--from" => Some(id.as_str()),
+                _ => bail!("usage: layover audition [--from <id>]"),
+            };
+            let start = match from {
+                Some(id) => HACKS
+                    .iter()
+                    .position(|h| h.id == id)
+                    .ok_or_else(|| anyhow!("no hack called `{id}` (`layover hacks` lists them)"))?,
+                None => 0,
+            };
+            let hacks = (0..HACKS.len()).map(|i| &HACKS[(start + i) % HACKS.len()]).collect();
+            saver::run(&cfg, saver::Options { hacks, run_for: None, audition: true })?;
+            Ok(0)
+        }
         "bar" => bar(),
         "status" => {
             match ask(&Request::Status) {
@@ -313,7 +336,7 @@ fn saver_cmd(rest: &[String]) -> Result<i32> {
         layover_hacks::rotation(&ids)
     }
     .map_err(|e| anyhow!(e))?;
-    saver::run(&cfg, saver::Options { hacks, run_for })?;
+    saver::run(&cfg, saver::Options { hacks, run_for, audition: false })?;
     Ok(0)
 }
 

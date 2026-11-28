@@ -52,6 +52,8 @@ pub enum Event {
     Idle { since: u64 },
     /// What holds the line now, read while a drawer is open.
     Holds { holds: HoldSnapshot },
+    /// Audition started or ended: while it runs it holds the line.
+    Audition { on: bool },
     /// `layover release`: end a manual hold.
     Release,
     /// `layover now`: start the saver now.
@@ -145,6 +147,8 @@ pub struct Model {
     idle_from: Option<u64>,
     /// The holds as last read.
     holds: HoldSnapshot,
+    /// Audition is running.
+    auditioning: bool,
 }
 
 impl Model {
@@ -194,6 +198,7 @@ impl Model {
             cheap: None,
             idle_from: None,
             holds: HoldSnapshot::default(),
+            auditioning: false,
         }
     }
 
@@ -269,6 +274,9 @@ impl Model {
         let view =
             |what: String, effect: &str| HoldView { what, effect: effect.into(), mine: false };
         let mut out = Vec::new();
+        if self.auditioning {
+            out.push(view("You are auditioning hacks".into(), all));
+        }
         if let Some(left) = self.manual_left() {
             out.push(HoldView {
                 what: format!("Held by you, {} more", round_minutes(left)),
@@ -422,6 +430,12 @@ impl Model {
                 }
             }
             Event::Holds { holds } => self.holds = holds,
+            Event::Audition { on } => {
+                self.auditioning = on;
+                if !on && !self.pending.is_empty() {
+                    out.push(Effect::Retry { after: 0 });
+                }
+            }
             Event::Release => {
                 if self.manual_until.take().is_some() {
                     self.note("Hold released", "you released it");
@@ -587,6 +601,9 @@ impl Model {
     }
 
     fn hold_reason(&self, station: Station, h: &HoldSnapshot) -> Option<String> {
+        if self.auditioning {
+            return Some("you are auditioning hacks".into());
+        }
         if let Some(left) = self.manual_left() {
             return Some(format!("held by you for {} more", round_minutes(left)));
         }
@@ -868,6 +885,16 @@ mod tests {
         assert_eq!(s.rail.saver, Some(15));
         assert_eq!(s.rail.lock, Some(60), "the lock comes with the dark");
         assert_eq!(s.up_next, ["starfield"]);
+    }
+
+    #[test]
+    fn audition_holds_the_line_until_it_ends() {
+        let mut m = model("");
+        m.step(0, Event::Audition { on: true });
+        assert_eq!(reach(&mut m, 900, Station::Saver, quiet()), [Retry { after: 60 }]);
+        assert!(m.lamp().tooltip.contains("auditioning"), "{}", m.lamp().tooltip);
+        assert_eq!(m.step(950, Event::Audition { on: false }), [Retry { after: 0 }]);
+        assert_eq!(m.step(950, Event::Retry { holds: quiet(), locked: false }), [StartSaver]);
     }
 
     #[test]

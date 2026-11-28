@@ -82,13 +82,16 @@ When a station is reached, the daemon checks what holds it:
 | On air | Logbook recording or dictating (the line), `feeds.hold_on_air` | saver, lock, dark |
 | Meeting soon | Timetable's `soon` or `now` (the line), `feeds.hold_meeting` | saver |
 | Manual | `layover hold <duration>` | saver, lock, dark |
+| Audition | `layover audition` running (its `audition` connection open) | saver, lock, dark |
 
 Audio holds only the dark by default: a static desktop while music plays is
 the worst case for a panel, and a hack under the care rules is not. A held
 station is checked again every 60 seconds while the desk stays idle.
 
 Streams come from `pactl -f json list sink-inputs` and `source-outputs`, the
-view sway-audio-idle-inhibit uses, run only when a station is reached. ALSA's
+view sway-audio-idle-inhibit uses, run when a station is reached and, while a
+drawer is connected, every 30 seconds so its Now tab can say what holds the
+line. ALSA's
 status can't tell a device PipeWire holds open from one that is recording.
 
 ### The state machine
@@ -217,6 +220,27 @@ The saver gets the rows from the daemon's `line` subscription and uploads
 them only when a row or the clock changes. Without a daemon it says nothing
 is on the line.
 
+### Audition
+
+`layover audition [--from <id>]` (the drawer's Audition, the quick menu's
+Audition hacks) is the saver stepping through every hack, in or out of the
+rotation, on the real panel, so you can choose by looking. It runs the
+saver's surfaces and care pass with keyboard focus and reads keys by evdev
+code, so a keyboard layout doesn't move them: Left and Right (or Up and Down,
+or the wheel) step, `k` keeps a hack in the rotation or leaves it out, `s`
+stars it, Space pauses, Escape or a click ends it. Pointer movement doesn't.
+Each hack gets 20 seconds unless paused, and two minutes without a key end
+Audition. Changes go to the daemon's `rotation` request (into the config
+directly without a daemon), and the last hack in the rotation can't be left
+out. While it runs it holds the line through an `{"cmd":"audition"}`
+connection the daemon holds until it closes.
+
+A strip says where you are in the Departure Board's dot font, drawn on the
+CPU into a small overlay layer surface that takes no input. Rule one for it:
+the plate is dim and the text stays under 70% of full, it shows for 4
+seconds after a key or a step and fades out over one, and while shown it
+drifts 24 pixels either way and 6 up and down.
+
 ### The wear test
 
 `layover-hacks/src/wear.rs` renders a hack headless at 256 × 72 for a
@@ -310,7 +334,8 @@ saver now), `{"cmd":"stop"}`, `{"cmd":"toggle","anchor":A}` and
 `{"cmd":"show","anchor":A}` (open the drawer from the bar, `A` being
 bar-anchor's `Anchor` or absent to center it), `{"cmd":"board"}`,
 `{"cmd":"line"}`, `{"cmd":"rotation","hack":ID,"weight":W}` (`W` is
-`never`, `sometimes` or `often`), `{"cmd":"extend","secs":N}` (lengthen
+`never`, `sometimes` or `often`), `{"cmd":"audition"}` (holds the line
+until the connection closes), `{"cmd":"extend","secs":N}` (lengthen
 your hold by `N` seconds, or shorten it with a negative `N`; one that reaches
 zero is released) and `{"cmd":"next","hack":ID}` (`hack` absent skips). Replies
 are a lamp `{"text","alt","class","tooltip"}` or `{"error"}`.
@@ -356,11 +381,13 @@ Three tabs:
   it), passes or fails from `wear.json`, a star (twice a round) and a switch
   (in the rotation). A search box (`/`) and chips filter it by name, in or
   out of the rotation, starred and family; Strips or List picks big pictures
-  or compact rows. Measure runs `layover wear` in the background. The drawer
+  or compact rows. Measure runs `layover wear` in the background; Audition
+  (`a`) closes the drawer and runs `layover audition`. The drawer
   runs `layover thumbs` at low priority the first time the tab opens, and
   pictures fill in as each hack is drawn. A click on a hack opens its sheet:
   the loop playing, frames at 0:30 and 2:30, what it looks like and whom it
-  follows, Never, Sometimes or Often with how often that comes up, Preview
+  follows, Never, Sometimes or Often with how often that comes up, Audition
+  from here, Preview
   (closes the drawer and runs `layover saver --hack <id> --for 20s`), Play it
   next time (`layover next <id>`), and its
   wear numbers as bars against your budget with the heat map. Arrows step

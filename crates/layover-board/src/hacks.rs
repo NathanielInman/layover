@@ -201,6 +201,18 @@ impl Drawer {
             }
         });
         buttons.append(&measure);
+        let audition = gtk::Button::with_label("Audition");
+        audition.add_css_class("primary");
+        audition.set_tooltip_text(Some(
+            "Step through every hack on the screen and keep, leave out or star each (a)",
+        ));
+        let w = Rc::downgrade(self);
+        audition.connect_clicked(move |_| {
+            if let Some(d) = w.upgrade() {
+                d.audition(None);
+            }
+        });
+        buttons.append(&audition);
         line.append(&buttons);
         root.append(&line);
 
@@ -533,6 +545,7 @@ impl Drawer {
                 }
             }
             gtk::gdk::Key::p => self.preview(&id),
+            gtk::gdk::Key::a => self.audition(Some(id)),
             _ => return false,
         }
         true
@@ -571,6 +584,16 @@ impl Drawer {
 
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         buttons.add_css_class("buttons");
+        let audition = gtk::Button::with_label("Audition from here");
+        audition.add_css_class("primary");
+        audition.set_tooltip_text(Some("Step through every hack on the screen from this one (a)"));
+        let (w, id) = (Rc::downgrade(self), h.id.clone());
+        audition.connect_clicked(move |_| {
+            if let Some(d) = w.upgrade() {
+                d.audition(Some(id.clone()));
+            }
+        });
+        card.append(&audition);
         let preview = gtk::Button::with_label("Preview 20s");
         preview.set_tooltip_text(Some("Close the drawer and show this hack for 20 seconds (p)"));
         let (w, id) = (Rc::downgrade(self), h.id.clone());

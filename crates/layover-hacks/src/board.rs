@@ -93,6 +93,12 @@ pub fn font_wgsl() -> String {
     )
 }
 
+/// A character's dot rows (top first, five bits each), for text drawn on
+/// the CPU such as Audition's strip. Anything outside `CHARSET` is a space.
+pub fn glyph_rows(c: char) -> [u8; 7] {
+    FONT[glyph(c) as usize]
+}
+
 fn glyph(c: char) -> u32 {
     CHARSET.chars().position(|g| g == c.to_ascii_uppercase()).unwrap_or(0) as u32
 }

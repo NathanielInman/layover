@@ -393,6 +393,7 @@ impl Drawer {
             return glib::Propagation::Stop;
         }
         match key {
+            gdk::Key::a if self.tab.get() == Tab::Hacks => self.audition(None),
             gdk::Key::slash if self.tab.get() == Tab::Hacks => {
                 if let Some(ui) = self.hacks_ui.borrow().as_ref() {
                     ui.search.grab_focus();
@@ -778,6 +779,31 @@ impl Drawer {
                         format!("Couldn't start the preview: {e}"),
                         true,
                     ));
+                }
+            }
+        });
+    }
+
+    /// Closes the drawer and steps through every hack on the screen, from
+    /// `from` or the first.
+    pub(crate) fn audition(self: &Rc<Self>, from: Option<String>) {
+        self.hide();
+        let tx = self.tx.clone();
+        glib::timeout_add_local_once(Duration::from_millis(250), move || {
+            let mut cmd = std::process::Command::new(layover_exe());
+            cmd.arg("audition").stdin(std::process::Stdio::null());
+            if let Some(id) = &from {
+                cmd.args(["--from", id]);
+            }
+            match cmd.spawn() {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send_blocking(Msg::Notice(format!("Couldn't start Audition: {e}"), true));
                 }
             }
         });

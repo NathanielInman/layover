@@ -174,7 +174,9 @@ what it risks. **Hacks** is a gallery of every hack with its picture
 (hover to play it), a switch to take it out of the rotation and a star to
 bring it up twice a round; click one for its sheet with its loop, how it
 changes over a few minutes, a 20 second Preview and its wear numbers against
-your budget. **History** shows the last 50 things the line
+your budget. **Audition** (on the Hacks tab, or `layover audition`) steps
+through every hack on the screen itself: arrows step, `k` keeps one or
+leaves it out, `s` stars it, Escape ends it. **History** shows the last 50 things the line
 did, with the time and why. Keys: `1` to `3`, `n` start, `h` hold, `+` and
 `-` lengthen or shorten a hold, `r` release, `/` find a hack, Escape. It takes your waybar's font and colors.
 
@@ -194,6 +196,8 @@ layover doctor                 check the setup (exits 1 when something is broken
 layover hacks                  list the hacks (* in the rotation, ** starred)
 layover rotation <id> never|sometimes|often
                                take a hack out of the rotation, put it back, or star it
+layover audition [--from <id>] step through every hack on the screen: arrows step,
+                               k keeps or leaves one out, s stars it, Esc ends
 layover saver --hack starfield --for 20s
                                show a hack now, without the daemon
 layover wear [<id>...]         run the wear test against your config and write heat maps
