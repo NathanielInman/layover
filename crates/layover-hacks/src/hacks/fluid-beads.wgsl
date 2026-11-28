@@ -1,6 +1,6 @@
-// Fluid Beads: luminous fluid beads sloshing, colliding and cascading through
-// tilting gravity chambers across the dark on Tier P compute particles and
-// advected Tier S feedback textures.
+// Fluid Beads: luminous fluid beads sloshing, colliding and cascading across
+// a stationary full-canvas tank on Tier P compute particles and Tier S feedback
+// textures.
 // After xscreensaver's Fluidballs (Peter Birtles and Jamie Zawinski).
 //
 // Race-free Jacobi ping-pong particle buffer (`Particles { count: 576 }`):
@@ -8,24 +8,21 @@
 //   according to `u32(round(max(g.frame, 0.0))) & 1u`.
 //
 // Particle layout (`particles[idx]`):
-//   p.xy  = chamber-local 2D position (canvas heights)
+//   p.xy  = full-canvas 2D position (canvas heights: x in 0..aspect(), y in 0..1)
 //   p.z   = bead radius in canvas heights
 //   p.w   = kinetic impact flash energy (0..1)
-//   v.xy  = chamber-local 2D velocity (canvas heights/sec)
+//   v.xy  = full-canvas 2D velocity (canvas heights/sec)
 //   v.z   = mass / buoyancy factor
 //   v.w   = spin angle (radians)
 //   c.rgb = jewel base RGB color
 //   c.w   = packed epoch `(gen % 16777215u) + 1u` stored exact in f32 (0 = uninitialized)
 
 const MAX_BALLS: u32 = 288u;
-const DRIFT_VX: f32 = 0.160;
 const EPOCH_SECS: f32 = 34.0;
-const MAX_SPEED: f32 = 1.35;
+const MAX_SPEED: f32 = 1.45;
+const TANK_PAD: f32 = 0.020;
 
-struct ChamberSpec {
-    half_size: vec2<f32>,
-    is_drum: bool,
-    drum_r: f32,
+struct TankSpec {
     restitution: f32,
     viscosity: f32,
     xsph: f32,
@@ -40,23 +37,133 @@ fn clamp_len(v: vec2<f32>, max_l: f32) -> vec2<f32> {
     return v;
 }
 
-fn chamber_spec(arch: u32, is_narrow: bool) -> ChamberSpec {
-    let sx = select(1.0, 0.87, is_narrow);
+fn safe_norm2(v: vec2<f32>, fallback: vec2<f32>) -> vec2<f32> {
+    let l2 = dot(v, v);
+    if (l2 > 1e-10) {
+        return v * inverseSqrt(l2);
+    }
+    return fallback;
+}
+
+fn reflect_range(x: f32, lo: f32, hi: f32) -> f32 {
+    let span = max(hi - lo, 1e-4);
+    let u = (x - lo) / span;
+    let m = u - 2.0 * floor(u * 0.5);
+    let f = select(2.0 - m, m, m <= 1.0);
+    return lo + f * span;
+}
+
+fn next_iso_wp(
+    cur: vec2<f32>,
+    prev_ang: f32,
+    step_idx: u32,
+    seed_v: vec2<f32>,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+) -> vec3<f32> {
+    let r = hash22(seed_v + vec2<f32>(f32(step_idx) * 13.7, f32(step_idx) * 29.3));
+    let ang = prev_ang + (r.x - 0.5) * 2.5;
+    let step_d = mix(d_min, d_max, r.y);
+    let cand = cur + vec2<f32>(cos(ang), sin(ang)) * step_d;
+    var nxt = vec2<f32>(reflect_range(cand.x, x_lo, x_hi), reflect_range(cand.y, y_lo, y_hi));
+    if (length(nxt - cur) < d_min * 0.55) {
+        let cx = 0.5 * (x_lo + x_hi);
+        let cy = 0.5 * (y_lo + y_hi);
+        let inward = safe_norm2(
+            vec2<f32>(cx - cur.x, cy - cur.y) + vec2<f32>(cos(ang), sin(ang)) * 0.35,
+            vec2<f32>(1.0, 0.0),
+        );
+        nxt = vec2<f32>(
+            clamp(cur.x + inward.x * step_d, x_lo, x_hi),
+            clamp(cur.y + inward.y * step_d, y_lo, y_hi),
+        );
+    }
+    let dp = nxt - cur;
+    let next_ang = atan2(dp.y, dp.x);
+    return vec3<f32>(nxt, next_ang);
+}
+
+fn catmull_rom2(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, u: f32) -> vec2<f32> {
+    let u2 = u * u;
+    let u3 = u2 * u;
+    return 0.5 * (
+        (2.0 * p1)
+        + (-p0 + p2) * u
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u3
+    );
+}
+
+fn iso_waypoint_pos(
+    p1_init: vec2<f32>,
+    ang_init: f32,
+    seed_v: vec2<f32>,
+    s: f32,
+    speed: f32,
+    x_lo: f32,
+    x_hi: f32,
+    y_lo: f32,
+    y_hi: f32,
+    d_min: f32,
+    d_max: f32,
+    max_hops: u32,
+) -> vec2<f32> {
+    var p1 = p1_init;
+    let w1 = next_iso_wp(p1, ang_init, 1u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p2 = w1.xy;
+    let w2 = next_iso_wp(p2, w1.z, 2u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+    var p3 = w2.xy;
+    var cur_ang = w2.z;
+    var p0 = p1 - (p2 - p1);
+    var t_acc = 0.0;
+
+    for (var k = 0u; k < max_hops; k = k + 1u) {
+        let seg_dur = max(length(p2 - p1) / speed, 0.35);
+        if (s <= t_acc + seg_dur || k + 1u == max_hops) {
+            let u = clamp((s - t_acc) / seg_dur, 0.0, 1.0);
+            let pos = catmull_rom2(p0, p1, p2, p3, u);
+            return vec2<f32>(
+                clamp(pos.x, x_lo - 0.05, x_hi + 0.05),
+                clamp(pos.y, y_lo - 0.04, y_hi + 0.04),
+            );
+        }
+        t_acc = t_acc + seg_dur;
+        p0 = p1;
+        p1 = p2;
+        p2 = p3;
+        let w_nxt = next_iso_wp(p2, cur_ang, k + 3u, seed_v, x_lo, x_hi, y_lo, y_hi, d_min, d_max);
+        p3 = w_nxt.xy;
+        cur_ang = w_nxt.z;
+    }
+    return p1;
+}
+
+fn bezel_fade(p: vec2<f32>, a: f32) -> f32 {
+    return smoothstep(0.012, 0.048, p.x)
+        * (1.0 - smoothstep(a - 0.048, a - 0.012, p.x))
+        * smoothstep(0.012, 0.048, p.y)
+        * (1.0 - smoothstep(0.952, 0.988, p.y));
+}
+
+fn tank_spec(arch: u32) -> TankSpec {
     if (arch == 0u) {
-        // Tumbling Wave Tank (Shake Box)
-        return ChamberSpec(vec2<f32>(0.44 * sx, 0.34), false, 0.0, 0.44, 0.16, 0.36, 0.50);
+        // Rolling Tidal Wave Tank
+        return TankSpec(0.46, 0.14, 0.36, 0.56);
     }
     if (arch == 1u) {
-        // Churning Tide Drum
-        let dr = select(0.39, 0.35, is_narrow);
-        return ChamberSpec(vec2<f32>(dr, dr), true, dr, 0.38, 0.20, 0.42, 0.46);
+        // Roaming Vortex Paddles
+        return TankSpec(0.42, 0.16, 0.40, 0.54);
     }
     if (arch == 2u) {
-        // Buoyant Fountain & Cascade
-        return ChamberSpec(vec2<f32>(0.43 * sx, 0.37), false, 0.0, 0.50, 0.12, 0.28, 0.55);
+        // Sweeping Alternating Geysers
+        return TankSpec(0.52, 0.11, 0.28, 0.58);
     }
-    // Elastic Gas & Convective Arena
-    return ChamberSpec(vec2<f32>(0.44 * sx, 0.35), false, 0.0, 0.94, 0.02, 0.04, 0.95);
+    // Elastic Convective Arena
+    return TankSpec(0.93, 0.02, 0.04, 0.94);
 }
 
 // Four curated jewel palettes with balanced R/G/B coverage across size classes.
@@ -115,176 +222,189 @@ fn bead_palette(pal: u32, class_id: u32) -> vec3<f32> {
     return vec3<f32>(0.62, 0.30, 1.00);
 }
 
-fn chamber_center(chamber_id: u32, n_chambers: u32, gen: u32, t: f32) -> vec2<f32> {
-    let a = aspect();
-    let fc = f32(chamber_id);
-    let fg = f32(gen);
-    let jx = (hash11(fc * 19.7 + fg * 31.3 + g.seed * 59.0) - 0.5) * 0.12;
-    let x0 = fract((fc + 0.5 + jx) / f32(n_chambers) + g.seed * 0.41) * a;
-    let y_base = 0.40 + 0.22 * fract(0.23 + fc * 0.47 + fg * 0.618034 + g.seed * 0.53);
-    let y_sway = 0.080 * sin(t * 0.29 + fc * 2.1 + fg * 1.3);
-    return vec2<f32>(
-        fract((x0 + DRIFT_VX * t) / a) * a,
-        clamp(y_base + y_sway, 0.38, 0.64),
-    );
-}
-
-fn chamber_angle(arch: u32, chamber_id: u32, gen: u32, phase: f32) -> f32 {
-    let fc = f32(chamber_id);
-    let fg = f32(gen);
-    let ph0 = hash11(fc * 13.7 + fg * 29.1 + g.seed * 41.0) * TAU;
-    if (arch == 0u) {
-        // Continuous wave rocking with smooth 180-degree overturns every 6.8s.
-        let turn_u = phase / 6.8;
-        let turn_i = floor(turn_u);
-        let turn_f = turn_u - turn_i;
-        let flip = (turn_i + smoothstep(0.24, 0.76, turn_f)) * PI;
-        let rock = 0.40 * sin(phase * 1.45 + ph0);
-        return flip + rock;
-    }
-    if (arch == 1u) {
-        return 0.0;
-    }
-    if (arch == 2u) {
-        return 0.22 * sin(phase * 0.88 + ph0);
-    }
-    return 0.18 * sin(phase * 0.52 + ph0);
-}
-
-fn chamber_accel(
+fn tank_accel(
     arch: u32,
-    spec: ChamberSpec,
-    box_ang: f32,
-    chamber_id: u32,
     gen: u32,
     phase: f32,
     pos: vec2<f32>,
     vel: vec2<f32>,
     density: f32,
+    a: f32,
 ) -> vec2<f32> {
-    let fc = f32(chamber_id);
-    let fg = f32(gen);
-    let ph0 = hash11(fc * 17.3 + fg * 23.9 + g.seed * 37.0) * TAU;
+    let ph0 = hash11(f32(gen) * 23.9 + g.seed * 37.0) * TAU;
+
+    // Gentle perimeter inward cushion (used gently in non-elastic liquid modes so beads never camp along bezels).
+    let edge_l = smoothstep(TANK_PAD + 0.10, TANK_PAD + 0.005, pos.x);
+    let edge_r = smoothstep(a - TANK_PAD - 0.10, a - TANK_PAD - 0.005, pos.x);
+    let edge_b = smoothstep(TANK_PAD + 0.10, TANK_PAD + 0.005, pos.y);
+    let edge_t = smoothstep(1.0 - TANK_PAD - 0.10, 1.0 - TANK_PAD - 0.005, pos.y);
 
     if (arch == 0u) {
-        // World gravity rotated into tilting box space + brisk slosh impulses.
-        var grav = rot2(-box_ang) * vec2<f32>(0.0, -1.65);
+        // Rolling Tidal Wave Tank: divergence-free slosh shear + traveling vertical swells across full width (zero corner trap).
+        let shear_x = sin(pos.y * 3.1 - phase * 1.25 + ph0) * 0.92 + cos(pos.y * 1.9 + phase * 0.85) * 0.42;
+        let swell_y = -1.05 * cos(pos.x * 1.95 - phase * 1.45 + ph0) - 0.36 * sin(phase * 0.90 + ph0);
         let shake_u = fract(phase / 4.2);
-        let shake_env = exp(-pow((shake_u - 0.5) * 7.5, 2.0));
-        let shake_x = sin(phase * 9.5 + ph0) * 1.90 * shake_env;
-        grav.x = grav.x + shake_x;
-        return grav * mix(0.84, 1.14, clamp((density - 0.70) / 0.65, 0.0, 1.0));
+        let shake_env = exp(-pow((shake_u - 0.5) * 7.0, 2.0));
+        let shake_x = sin(phase * 7.2 + pos.y * 2.6 + ph0) * 0.95 * shake_env;
+        let dens_scale = mix(0.84, 1.14, clamp((density - 0.70) / 0.65, 0.0, 1.0));
+        var acc = vec2<f32>(shear_x + shake_x, swell_y) * dens_scale;
+        acc = acc + vec2<f32>(edge_l - edge_r, edge_b - edge_t) * 0.80;
+        return acc;
     }
 
     if (arch == 1u) {
-        // Rotating gravity + orbiting internal paddle scooping fluid into breakers.
-        let g_ang = phase * 0.74 + ph0;
-        var acc = vec2<f32>(sin(g_ang), -cos(g_ang)) * 1.45;
-        let pad_w = -phase * 2.15 + ph0;
-        let pad_pos = vec2<f32>(cos(pad_w), sin(pad_w)) * (spec.drum_r * 0.56);
-        let pad_tang = vec2<f32>(-sin(pad_w), cos(pad_w));
-        let to_pad = pos - pad_pos;
-        let d_pad = length(to_pad);
-        if (d_pad < 0.19) {
-            let k = smoothstep(0.19, 0.02, d_pad);
-            let push_dir = normalize(to_pad + vec2<f32>(1e-4, 2e-4));
-            acc = acc + push_dir * (3.8 * k) + pad_tang * (3.2 * k);
+        // Roaming Vortex Paddles: mild cellular shear tide + balanced centripetal-whirlpool paddles + wall entrainment.
+        let tide = vec2<f32>(
+            sin(pos.y * 3.1 + phase * 0.82 + ph0),
+            cos(pos.x * 2.2 - phase * 0.74 + ph0),
+        ) * 0.36;
+        var acc = tide + vec2<f32>(edge_l - edge_r, edge_b - edge_t) * 0.95;
+        let n_paddles = select(3u, 2u, a < 2.4);
+        for (var k = 0u; k < n_paddles; k = k + 1u) {
+            let fk = f32(k);
+            let h_k = hash22(vec2<f32>(fk * 17.3 + f32(gen) * 29.1, g.seed * 61.0 + 5.1));
+            let x0 = mix(0.32, a - 0.32, (fk + 0.5) / f32(n_paddles));
+            let y0 = 0.25 + 0.50 * h_k.x;
+            let seed_v = vec2<f32>(fk * 43.1 + f32(gen) * 19.7 + 1.3, g.seed * 97.0 + fk * 7.9);
+            let pad_pos = iso_waypoint_pos(
+                vec2<f32>(x0, y0),
+                h_k.y * TAU,
+                seed_v,
+                phase,
+                0.46,
+                0.24,
+                a - 0.24,
+                0.22,
+                0.78,
+                0.65,
+                1.25,
+                28u,
+            );
+            let to_pad = pos - pad_pos;
+            let d_pad = length(to_pad);
+            if (d_pad < 0.56) {
+                let w = smoothstep(0.56, 0.06, d_pad);
+                let radial = safe_norm2(to_pad, vec2<f32>(1.0, 0.0));
+                let spin_dir = select(-1.0, 1.0, (k & 1u) == 0u);
+                let tang = vec2<f32>(-radial.y, radial.x) * spin_dir;
+                let pull = smoothstep(0.56, 0.22, d_pad) * smoothstep(0.06, 0.16, d_pad);
+                let core_push = smoothstep(0.11, 0.015, d_pad);
+                acc = acc + radial * (2.2 * core_push - 2.35 * pull) + tang * (2.25 * w);
+            }
         }
         return acc;
     }
 
     if (arch == 2u) {
-        // Rocking gravity + wide counter-sweeping floor geysers + gentle convective draw toward jets.
-        var acc = rot2(-box_ang) * vec2<f32>(0.0, -1.65);
-        let floor_y = -spec.half_size.y;
-        let j1_x = spec.half_size.x * 0.54 * sin(phase * 0.92 + ph0);
-        let j2_x = -spec.half_size.x * 0.54 * sin(phase * 0.92 + ph0 + 0.9);
-        let h_norm = clamp((pos.y - floor_y) / 0.34, 0.0, 1.0);
-        let y_gate = 1.0 - h_norm * h_norm;
-        if (y_gate > 0.01) {
-            let d1 = abs(pos.x - j1_x);
-            let d2 = abs(pos.x - j2_x);
-            let w1 = exp(-(d1 * d1) / (0.13 * 0.13)) * y_gate;
-            let w2 = exp(-(d2 * d2) / (0.13 * 0.13)) * y_gate;
-            let fan1 = (pos.x - j1_x) * 4.8 + 0.55 * cos(phase * 2.1 + ph0);
-            let fan2 = (pos.x - j2_x) * 4.8 - 0.55 * sin(phase * 1.9 + ph0);
-            acc = acc + vec2<f32>(fan1 * w1 + fan2 * w2, 6.2 * (w1 + w2));
-            // Gentle bottom floor return sweep guides pooled beads back under the jets.
-            if (pos.y < floor_y + 0.12) {
-                let near_j = select(j2_x, j1_x, d1 < d2);
-                acc.x = acc.x + clamp((near_j - pos.x) * 3.0, -1.2, 1.2);
+        // Sweeping Alternating Geysers: vertical overturning gravity swaps floor/ceiling every 8.2s with distributed sweeping plumes.
+        let turn_u = phase / 8.2;
+        let turn_i = floor(turn_u);
+        let turn_f = turn_u - turn_i;
+        let flip_ang = (turn_i + smoothstep(0.30, 0.70, turn_f)) * PI;
+        let flip_wave = abs(sin(flip_ang)) * sin(pos.x * 2.2 + phase * 1.4 + ph0) * 0.45;
+        var acc = vec2<f32>(flip_wave, -cos(flip_ang) * 1.25);
+
+        let down_w = smoothstep(-0.20, 0.20, -acc.y);
+        let up_w = smoothstep(-0.20, 0.20, acc.y);
+        let h_down = clamp((pos.y - TANK_PAD) / 0.62, 0.0, 1.0);
+        let h_up = clamp(((1.0 - TANK_PAD) - pos.y) / 0.62, 0.0, 1.0);
+        let y_gate_down = (1.0 - h_down * h_down) * down_w;
+        let y_gate_up = (1.0 - h_up * h_up) * up_w;
+
+        let n_jets = select(4u, 2u, a < 2.4);
+        var near_jx = pos.x;
+        var near_d = 1e6;
+        for (var k = 0u; k < n_jets; k = k + 1u) {
+            let fk = f32(k);
+            let x0 = mix(0.18, a - 0.18, (fk + 0.5) / f32(n_jets));
+            let dir = select(-1.0, 1.0, (k & 1u) == 0u);
+            let jx = reflect_range(x0 + dir * 0.36 * phase, 0.12, a - 0.12);
+            let dx = pos.x - jx;
+            let adx = abs(dx);
+            if (adx < near_d) {
+                near_d = adx;
+                near_jx = jx;
+            }
+            let gauss = exp(-(dx * dx) / (0.17 * 0.17));
+            let fan_x = dx * 2.6 + 0.42 * cos(phase * 2.0 + fk * 1.7 + ph0);
+            if (y_gate_down > 0.01) {
+                let w = gauss * y_gate_down;
+                acc = acc + vec2<f32>(fan_x * w, 6.8 * w);
+            }
+            if (y_gate_up > 0.01) {
+                let w = gauss * y_gate_up;
+                acc = acc + vec2<f32>(fan_x * w, -6.8 * w);
             }
         }
-        acc.y = acc.y + (1.0 - density) * 0.52;
+
+        if (down_w > 0.05 && pos.y < TANK_PAD + 0.16) {
+            acc.x = acc.x + clamp((near_jx - pos.x) * 2.4, -1.2, 1.2) * down_w;
+        }
+        if (up_w > 0.05 && pos.y > 1.0 - TANK_PAD - 0.16) {
+            acc.x = acc.x + clamp((near_jx - pos.x) * 2.4, -1.2, 1.2) * up_w;
+        }
+
+        acc.x = acc.x + (edge_l - edge_r) * 0.70;
+        acc.y = acc.y + (1.0 - density) * 0.55 * (down_w - up_w);
         return acc;
     }
 
-    // Elastic Gas & Convective Arena: mild rotating gravity + dual-eddy convective current + soft centering.
-    let g_ang = phase * 0.42 + ph0;
-    var acc = vec2<f32>(sin(g_ang), -cos(g_ang)) * 0.34;
-    let eddy_x = sin(pos.y * 7.2 + phase * 1.15 + ph0);
-    let eddy_y = cos(pos.x * 6.5 - phase * 0.95 + ph0);
-    acc = acc + vec2<f32>(eddy_x, eddy_y) * 0.48;
-    // Soft inward restoring tether keeps gas molecules filling the center instead of hugging walls.
-    acc = acc - pos * 0.95;
+    // Elastic Convective Arena: divergence-free isotropic convective cells + speed thermostat (no corner bias).
+    let k1 = 3.1;
+    let k2 = 2.1;
+    let ax = pos.x * k1 - phase * 0.62 + ph0;
+    let by = pos.y * k1 + phase * 0.54 + ph0 * 1.3;
+    let cx = pos.x * k2 + pos.y * k2 - phase * 0.78 + ph0 * 0.7;
+    let dpsi_dx = 0.25 * k1 * cos(ax) * sin(by) - 0.15 * k2 * sin(cx);
+    let dpsi_dy = 0.25 * k1 * sin(ax) * cos(by) - 0.15 * k2 * sin(cx);
+    var acc = vec2<f32>(-dpsi_dy, dpsi_dx) * 0.85;
+
     let spd = length(vel);
-    let target_spd = 0.56;
+    let target_spd = 0.65;
     if (spd > 1e-4) {
-        acc = acc + (vel / spd) * clamp((target_spd - spd) * 1.45, -0.45, 0.70);
+        acc = acc + (vel / spd) * clamp((target_spd - spd) * 1.65, -0.50, 0.85);
     }
     return acc;
 }
 
-fn clamp_to_chamber(
+fn clamp_to_tank(
     pos_in: vec2<f32>,
     vel_in: vec2<f32>,
     r: f32,
-    spec: ChamberSpec,
+    a: f32,
+    spec: TankSpec,
 ) -> vec4<f32> {
     var p = pos_in;
     var v = vel_in;
+    let x_lo = TANK_PAD + r;
+    let x_hi = a - TANK_PAD - r;
+    let y_lo = TANK_PAD + r;
+    let y_hi = 1.0 - TANK_PAD - r;
 
-    if (spec.is_drum) {
-        let max_r = max(spec.drum_r - r, 0.02);
-        let d = length(p);
-        if (d > max_r && d > 1e-5) {
-            let n = p / d;
-            p = n * max_r;
-            let vn = dot(v, n);
-            if (vn > 0.0) {
-                v = v - (1.0 + spec.wall_restitution) * vn * n;
-                let t_vec = vec2<f32>(-n.y, n.x);
-                v = v - t_vec * (dot(v, t_vec) * 0.05);
-            }
-        }
-        return vec4<f32>(p, v);
-    }
-
-    let bound = max(spec.half_size - vec2<f32>(r), vec2<f32>(0.02));
-    if (p.x < -bound.x) {
-        p.x = -bound.x;
+    if (p.x < x_lo) {
+        p.x = x_lo;
         if (v.x < 0.0) {
             v.x = -v.x * spec.wall_restitution;
-            v.y = v.y * 0.95;
+            v.y = v.y * 0.97;
         }
-    } else if (p.x > bound.x) {
-        p.x = bound.x;
+    } else if (p.x > x_hi) {
+        p.x = x_hi;
         if (v.x > 0.0) {
             v.x = -v.x * spec.wall_restitution;
-            v.y = v.y * 0.95;
+            v.y = v.y * 0.97;
         }
     }
-    if (p.y < -bound.y) {
-        p.y = -bound.y;
+    if (p.y < y_lo) {
+        p.y = y_lo;
         if (v.y < 0.0) {
             v.y = -v.y * spec.wall_restitution;
-            v.x = v.x * 0.95;
+            v.x = v.x * 0.97;
         }
-    } else if (p.y > bound.y) {
-        p.y = bound.y;
+    } else if (p.y > y_hi) {
+        p.y = y_hi;
         if (v.y > 0.0) {
             v.y = -v.y * spec.wall_restitution;
-            v.x = v.x * 0.95;
+            v.x = v.x * 0.97;
         }
     }
     return vec4<f32>(p, v);
@@ -293,59 +413,56 @@ fn clamp_to_chamber(
 fn spawn_bead(
     arch: u32,
     pal_id: u32,
-    spec: ChamberSpec,
-    chamber_id: u32,
-    local_id: u32,
-    balls_per: u32,
+    ball_id: u32,
+    n_active: u32,
     gen: u32,
+    a: f32,
 ) -> Particle {
-    let fl = f32(local_id);
-    let fc = f32(chamber_id);
+    let fi = f32(ball_id);
     let fg = f32(gen);
-    let h0 = hash22(vec2<f32>(fl * 1.73 + fc * 17.3, fg * 31.7 + g.seed * 67.0));
-    let h1 = hash22(vec2<f32>(fl * 2.91 + fg * 19.3, fc * 41.1 + g.seed * 53.0));
+    let h0 = hash22(vec2<f32>(fi * 1.73 + fg * 17.3, fg * 31.7 + g.seed * 67.0));
+    let h1 = hash22(vec2<f32>(fi * 2.91 + fg * 19.3, fg * 41.1 + g.seed * 53.0));
 
-    let class_id = local_id % 4u;
-    var r = 0.020;
+    let class_id = ball_id % 4u;
+    var r = 0.024;
     var density = 1.0;
     if (class_id == 0u) {
-        r = 0.025 + 0.004 * h0.x;
+        r = 0.030 + 0.004 * h0.x;
         density = 1.25;
     } else if (class_id == 1u) {
-        r = 0.021 + 0.003 * h0.x;
+        r = 0.025 + 0.004 * h0.x;
         density = 1.05;
     } else if (class_id == 2u) {
-        r = 0.017 + 0.003 * h0.x;
+        r = 0.021 + 0.003 * h0.x;
         density = 0.90;
     } else {
-        r = 0.014 + 0.002 * h0.x;
+        r = 0.017 + 0.003 * h0.x;
         density = 0.75;
     }
 
-    // Golden-angle spiral or grid placement keeps initial beads separated inside every chamber.
-    let u = (fl + 0.5) / max(f32(balls_per), 1.0);
-    let ang = fl * 2.3999632 + h0.y * 0.35 + fc * 1.7;
-    var pos = vec2<f32>(0.0);
-    if (spec.is_drum) {
-        let rr = sqrt(u) * max(spec.drum_r - r * 1.6, 0.05);
-        pos = vec2<f32>(cos(ang), sin(ang)) * rr;
-    } else {
-        let cols = max(floor(sqrt(f32(balls_per) * 1.25)), 4.0);
-        let rows = ceil(f32(balls_per) / cols);
-        let gx = (fl % cols + 0.5 + (h0.x - 0.5) * 0.45) / cols * 2.0 - 1.0;
-        let gy = (floor(fl / cols) + 0.5 + (h0.y - 0.5) * 0.45) / max(rows, 1.0) * 2.0 - 1.0;
-        let bound = max(spec.half_size - vec2<f32>(r * 1.6), vec2<f32>(0.05));
-        pos = vec2<f32>(gx * bound.x * 0.92, gy * bound.y * 0.92);
-    }
+    // Stratified 1:1 grid across the full tank avoids initial bead overlaps.
+    let rows = max(round(sqrt(f32(n_active) / max(a, 0.5))), 4.0);
+    let cols = ceil(f32(n_active) / rows);
+    let gx = (fi % cols + 0.5 + (h0.x - 0.5) * 0.48) / cols;
+    let gy = (floor(fi / cols) + 0.5 + (h0.y - 0.5) * 0.48) / rows;
+    let margin = TANK_PAD + r * 1.4;
+    let pos = vec2<f32>(
+        mix(margin, a - margin, clamp(gx, 0.0, 1.0)),
+        mix(margin, 1.0 - margin, clamp(gy, 0.0, 1.0)),
+    );
 
-    var vel = vec2<f32>((h1.x - 0.5) * 0.55, (h1.y - 0.5) * 0.55);
-    if (arch == 0u || arch == 1u) {
-        vel = vel + vec2<f32>(-pos.y, pos.x) * 1.15;
+    let ang = h1.x * TAU;
+    let rel = pos - vec2<f32>(a * 0.5, 0.5);
+    var vel = vec2<f32>(cos(ang), sin(ang)) * (0.35 + 0.24 * h1.y);
+    if (arch == 0u) {
+        vel = vel + vec2<f32>(0.42 * cos(pos.x * 1.8), 0.36 * sin(pos.x * 1.8));
+    } else if (arch == 1u) {
+        let dir = safe_norm2(vec2<f32>(-rel.y, rel.x * 0.55), vec2<f32>(1.0, 0.0));
+        vel = vel * 0.65 + dir * (0.38 + 0.20 * h1.y);
     } else if (arch == 2u) {
-        vel = vel + vec2<f32>(pos.x * 0.4, 0.35 + 0.25 * h1.y);
+        vel = vec2<f32>(cos(ang) * 0.38, 0.42 + 0.26 * h1.y);
     } else {
-        let dir = normalize(vec2<f32>(cos(ang + 1.2), sin(ang + 1.2)));
-        vel = dir * (0.42 + 0.24 * h1.x);
+        vel = vec2<f32>(cos(ang), sin(ang)) * (0.55 + 0.20 * h1.y);
     }
 
     let col = bead_palette(pal_id, class_id);
@@ -363,12 +480,12 @@ fn splat_bead(
     impact_e: f32,
     spin: f32,
     env: f32,
+    a: f32,
 ) {
     if (env <= 0.003) {
         return;
     }
-    let y_clip = smoothstep(0.015, 0.06, world_p.y) * (1.0 - smoothstep(0.94, 0.985, world_p.y));
-    let alpha_env = env * y_clip;
+    let alpha_env = env * bezel_fade(world_p, a);
     if (alpha_env <= 0.003) {
         return;
     }
@@ -377,7 +494,7 @@ fn splat_bead(
     let uv = state_uv(world_p);
     let center_px = uv * vec2<f32>(dims) - 0.5;
     let px_r = r * f32(dims.y);
-    let ir = clamp(i32(ceil(px_r + 1.2)), 1, 22);
+    let ir = clamp(i32(ceil(px_r + 1.2)), 1, 24);
     let base = vec2<i32>(round(center_px));
     let inv_r = 1.0 / max(px_r, 0.5);
 
@@ -396,6 +513,9 @@ fn splat_bead(
         let rel_y = center_px.y - f32(cy);
         for (var dx = -ir; dx <= ir; dx = dx + 1) {
             let cx = base.x + dx;
+            if (cx < 0 || cx >= dims.x) {
+                continue;
+            }
             let rel_x = f32(cx) - center_px.x;
             let d_px = length(vec2<f32>(rel_x, rel_y));
             if (d_px > px_r + 0.85) {
@@ -426,8 +546,7 @@ fn splat_bead(
             shaded = shaded + mix(col, vec3<f32>(1.0, 0.97, 0.92), 0.48) * (impact_e * (0.34 + 0.48 * fres));
             shaded = clamp(shaded, vec3<f32>(0.0), vec3<f32>(1.50));
 
-            let wx = ((cx % dims.x) + dims.x) % dims.x;
-            splat_pixel(vec2<i32>(wx, cy), vec4<f32>(shaded * cov, cov));
+            splat_pixel(vec2<i32>(cx, cy), vec4<f32>(shaded * cov, cov));
         }
     }
 }
@@ -445,29 +564,21 @@ fn step_particle(idx: u32, t: f32) {
 
     let ball_id = idx - write_base;
     let a = aspect();
-    let is_narrow = a < 2.4;
-    let n_chambers = select(3u, 2u, is_narrow);
-    let balls_per = select(96u, 72u, is_narrow);
-    if (ball_id >= n_chambers * balls_per) {
+    let n_active = clamp(u32(round(81.0 * a)), 96u, MAX_BALLS);
+    if (ball_id >= n_active) {
         return;
     }
 
-    let chamber_id = ball_id / balls_per;
-    let local_id = ball_id % balls_per;
-    let fc = f32(chamber_id);
-    let chamber_off = (fc / f32(n_chambers) + 0.13 * hash11(fc * 19.3 + g.seed * 41.0)) * EPOCH_SECS;
-
-    let cycle_t = t + chamber_off;
+    let seed_off = (0.14 + 0.56 * hash11(g.seed * 41.0 + 3.7)) * EPOCH_SECS;
+    let cycle_t = t + seed_off;
     let gen = u32(max(floor(cycle_t / EPOCH_SECS), 0.0));
     let phase = cycle_t - f32(gen) * EPOCH_SECS;
     let u_epoch = phase / EPOCH_SECS;
-    let env = smoothstep(0.0, 0.07, u_epoch) * (1.0 - smoothstep(0.92, 1.0, u_epoch));
+    let env = smoothstep(0.0, 0.06, u_epoch) * (1.0 - smoothstep(0.94, 1.0, u_epoch));
 
-    let arch = (gen + chamber_id + u32(g.seed * 13.0)) % 4u;
-    let pal_id = (gen * 3u + chamber_id * 2u + u32(g.seed * 17.0)) % 4u;
-    let spec = chamber_spec(arch, is_narrow);
-    let box_ang = chamber_angle(arch, chamber_id, gen, phase);
-    let chamber_cm = chamber_center(chamber_id, n_chambers, gen, t + g.dt);
+    let arch = (gen + u32(g.seed * 13.0)) % 4u;
+    let pal_id = (gen * 3u + u32(g.seed * 17.0)) % 4u;
+    let spec = tank_spec(arch);
 
     let st = particles[read_base + ball_id];
     let packed_now = f32((gen % 16777215u) + 1u);
@@ -478,11 +589,9 @@ fn step_particle(idx: u32, t: f32) {
         || !all(st.v.xyz == st.v.xyz);
 
     if (uninit) {
-        let sp = spawn_bead(arch, pal_id, spec, chamber_id, local_id, balls_per, gen);
+        let sp = spawn_bead(arch, pal_id, ball_id, n_active, gen, a);
         particles[write_base + ball_id] = sp;
-        let wp = chamber_cm + rot2(box_ang) * sp.p.xy;
-        let wrap_p = vec2<f32>(fract(wp.x / a) * a, wp.y);
-        splat_bead(wrap_p, sp.p.z, sp.c.rgb, sp.p.w, sp.v.w, env);
+        splat_bead(sp.p.xy, sp.p.z, sp.c.rgb, sp.p.w, sp.v.w, env, a);
         return;
     }
 
@@ -496,7 +605,7 @@ fn step_particle(idx: u32, t: f32) {
     let col = st.c.rgb;
     let mi = ri * ri * density;
 
-    let acc = chamber_accel(arch, spec, box_ang, chamber_id, gen, phase, p, v, density);
+    let acc = tank_accel(arch, gen, phase, p, v, density, a);
     v = clamp_len(v + acc * dt, MAX_SPEED);
     let p_pred = p + v * dt;
 
@@ -506,14 +615,13 @@ fn step_particle(idx: u32, t: f32) {
     var hit_count = 0.0;
     var spin_kick = 0.0;
 
-    let chamber_base = read_base + chamber_id * balls_per;
-    let det_seed = f32(local_id) * 0.73 + f32(frame_u % 97u) * 0.19;
+    let det_seed = f32(ball_id) * 0.73 + f32(frame_u % 97u) * 0.19;
 
-    for (var j_local = 0u; j_local < balls_per; j_local = j_local + 1u) {
-        if (j_local == local_id) {
+    for (var j = 0u; j < n_active; j = j + 1u) {
+        if (j == ball_id) {
             continue;
         }
-        let nb = particles[chamber_base + j_local];
+        let nb = particles[read_base + j];
         if (nb.c.w <= 0.5 || abs(nb.c.w - packed_now) > 0.5 || !all(nb.p.xyz == nb.p.xyz)) {
             continue;
         }
@@ -522,6 +630,9 @@ fn step_particle(idx: u32, t: f32) {
         let smooth_r = min_d * 1.65;
         let pj_pred = nb.p.xy + nb.v.xy * dt;
         let dvec = p_pred - pj_pred;
+        if (abs(dvec.x) >= smooth_r || abs(dvec.y) >= smooth_r) {
+            continue;
+        }
         let dist2 = dot(dvec, dvec);
         if (dist2 >= smooth_r * smooth_r) {
             continue;
@@ -531,7 +642,7 @@ fn step_particle(idx: u32, t: f32) {
         let w_i = mj / max(mi + mj, 1e-6);
 
         if (dist < min_d) {
-            var n = vec2<f32>(cos(det_seed + f32(j_local)), sin(det_seed + f32(j_local)));
+            var n = vec2<f32>(cos(det_seed + f32(j)), sin(det_seed + f32(j)));
             if (dist > 1e-4) {
                 n = dvec / dist;
             }
@@ -567,7 +678,7 @@ fn step_particle(idx: u32, t: f32) {
 
     // Measure wall impact before clamping so boundary bounces also flash subtly.
     let pre_clamp_v = v_new;
-    let clamped = clamp_to_chamber(p_new, v_new, ri, spec);
+    let clamped = clamp_to_tank(p_new, v_new, ri, a, spec);
     p_new = clamped.xy;
     v_new = clamped.zw;
     let wall_dv = length(v_new - pre_clamp_v);
@@ -576,10 +687,10 @@ fn step_particle(idx: u32, t: f32) {
     }
 
     v_new = clamp_len(v_new, MAX_SPEED);
-    spin = spin + (spin_kick + length(v_new) * 1.4 * select(-1.0, 1.0, (local_id & 1u) == 0u)) * dt;
+    spin = spin + (spin_kick + length(v_new) * 1.4 * select(-1.0, 1.0, (ball_id & 1u) == 0u)) * dt;
 
     if (!all(p_new == p_new) || !all(v_new == v_new)) {
-        let sp = spawn_bead(arch, pal_id, spec, chamber_id, local_id, balls_per, gen);
+        let sp = spawn_bead(arch, pal_id, ball_id, n_active, gen, a);
         particles[write_base + ball_id] = sp;
         return;
     }
@@ -590,30 +701,26 @@ fn step_particle(idx: u32, t: f32) {
     next_st.c = vec4<f32>(col, packed_now);
     particles[write_base + ball_id] = next_st;
 
-    let wp = chamber_cm + rot2(box_ang) * p_new;
-    let wrap_p = vec2<f32>(fract(wp.x / a) * a, wp.y);
-    splat_bead(wrap_p, ri, col, next_st.p.w, spin, env);
+    splat_bead(p_new, ri, col, next_st.p.w, spin, env, a);
 }
 
 fn resolve_state(uv: vec2<f32>, _p: vec2<f32>, _t: f32, splat: vec4<f32>) -> vec4<f32> {
     let dims = splat_dims();
-    let duv = vec2<f32>(DRIFT_VX * g.dt / aspect(), 0.0);
-    let base_uv = uv - duv;
-    var prev = state_sample(base_uv);
+    var prev = state_sample(uv);
     if (dims.y >= 180) {
         let tex = state_texel();
         let blur = (
-            state_sample(base_uv + vec2<f32>(tex.x, 0.0))
-            + state_sample(base_uv - vec2<f32>(tex.x, 0.0))
-            + state_sample(base_uv + vec2<f32>(0.0, tex.y))
-            + state_sample(base_uv - vec2<f32>(0.0, tex.y))
+            state_sample(uv + vec2<f32>(tex.x, 0.0))
+            + state_sample(uv - vec2<f32>(tex.x, 0.0))
+            + state_sample(uv + vec2<f32>(0.0, tex.y))
+            + state_sample(uv - vec2<f32>(0.0, tex.y))
         ) * 0.25;
-        let diff = clamp(g.dt * 10.0, 0.0, 0.34);
+        let diff = clamp(g.dt * 18.0, 0.0, 0.44);
         prev = mix(prev, blur, diff);
     }
 
     // Step vacated bead interiors down sharply so moving beads leave a soft liquid shimmer instead of stepped rings.
-    let wake_drop = mix(0.76, 0.11, clamp(prev.a, 0.0, 1.0));
+    let wake_drop = mix(0.62, 0.08, clamp(prev.a, 0.0, 1.0));
     let wake = prev.rgb * (g.fade * wake_drop);
 
     let ball_cov = clamp(splat.a, 0.0, 1.0);
