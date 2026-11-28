@@ -400,10 +400,14 @@ Three tabs:
   next time (`layover next <id>`), and its
   wear numbers as bars against your budget with the heat map. Arrows step
   through sheets, `p` previews and Escape goes back to the gallery.
-- **History**: the last 50 transitions, newest first, each with its local
-  time and why: a station reached or held (once per hold, not every retry),
-  the saver started, dismissed or ended, locked, screens off and on, holds
-  and releases.
+- **History**: today as a strip from midnight, each stretch in its state's
+  color (armed, saver, held, dark) with a mark at now and the minutes of
+  saver, held and dark, kept for two days from the lamp's changes since the
+  daemon started. Then the last 50 transitions, newest first, each with its
+  local time and why: a station reached or held (once per hold, not every
+  retry), the saver started, dismissed or ended, locked, screens off and on,
+  holds and releases. A saver run says how long it ran and shows the hacks
+  it showed, small.
 
 Keys: `1` to `3` pick a tab, `n` starts the saver, `h` holds for an hour,
 `+` and `-` lengthen or shorten a hold by 15 minutes, `r` releases, `/`

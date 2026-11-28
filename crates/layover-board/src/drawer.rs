@@ -545,7 +545,7 @@ impl Drawer {
         let shown = match self.tab.get() {
             Tab::Hacks => serde_json::to_string(&(&snap.hacks, &snap.hack, snap.up_next.first()))
                 .unwrap_or_default(),
-            Tab::History => serde_json::to_string(&snap.history).unwrap_or_default(),
+            Tab::History => serde_json::to_string(&(&snap.history, &snap.day)).unwrap_or_default(),
             Tab::Now => serde_json::to_string(&snap).unwrap_or_default(),
         };
         if self.menu.get() {
@@ -836,6 +836,44 @@ impl Drawer {
     }
 
     fn render_history(self: &Rc<Self>, s: &Snapshot) {
+        let today = gtk::Box::new(gtk::Orientation::Vertical, 7);
+        today.add_css_class("card");
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let t = label("TODAY", &["t-label"]);
+        t.set_hexpand(true);
+        head.append(&t);
+        let d = &s.day;
+        head.append(&label(
+            &format!(
+                "saver {} \u{b7} held {} \u{b7} dark {}",
+                mins(d.saver_mins),
+                mins(d.held_mins),
+                mins(d.dark_mins)
+            ),
+            &["dim", "small"],
+        ));
+        today.append(&head);
+        today.append(&crate::day::DayStrip::new(d));
+        let hours = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        hours.set_homogeneous(true);
+        for (i, h) in ["00", "06", "12", "18", "24"].iter().enumerate() {
+            let l = label(h, &["hour"]);
+            l.set_xalign(i as f32 / 4.0);
+            hours.append(&l);
+        }
+        today.append(&hours);
+        let legend = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        for (state, name) in
+            [("armed", "armed"), ("saver", "saver"), ("held", "held"), ("dark", "dark")]
+        {
+            let item = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+            item.append(&label("\u{25a0}", &["swatch", &format!("day-{state}")]));
+            item.append(&label(name, &["dim", "small"]));
+            legend.append(&item);
+        }
+        today.append(&legend);
+        self.content.append(&today);
+
         if s.history.is_empty() {
             let card = gtk::Box::new(gtk::Orientation::Vertical, 4);
             card.add_css_class("card");
@@ -846,8 +884,9 @@ impl Drawer {
             self.content.append(&card);
             return;
         }
-        let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        let card = gtk::Box::new(gtk::Orientation::Vertical, 10);
         card.add_css_class("card");
+        let aspect = self.thumbs.borrow().aspect();
         for e in &s.history {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
             let time = label(&e.time, &["hist-time"]);
@@ -858,6 +897,24 @@ impl Drawer {
             text.append(&wrapped(&e.what, &["hist-what"]));
             if !e.why.is_empty() {
                 text.append(&wrapped(&e.why, &["hist-why"]));
+            }
+            if !e.hacks.is_empty() {
+                let film = gtk::Box::new(gtk::Orientation::Horizontal, 3);
+                film.set_margin_top(4);
+                for id in e.hacks.iter().take(5) {
+                    let pic = crate::thumbs::picture(
+                        &self.thumbs,
+                        id,
+                        (48.0 * aspect).round() as i32,
+                        false,
+                    );
+                    pic.set_size_request(48, (48.0 * aspect).round() as i32);
+                    let name =
+                        s.hacks.iter().find(|h| &h.id == id).map(|h| h.name.as_str()).unwrap_or(id);
+                    pic.set_tooltip_text(Some(name));
+                    film.append(&pic);
+                }
+                text.append(&film);
             }
             row.append(&text);
             card.append(&row);

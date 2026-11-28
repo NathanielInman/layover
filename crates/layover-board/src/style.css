@@ -273,3 +273,14 @@ button.star:checked { color: @lo_held; background: transparent; }
   border-radius: 4px;
   padding: 0 5px;
 }
+
+/* ---- the day ---- */
+.day-none { color: alpha(@lo_fg, 0.05); }
+.day-armed { color: alpha(@lo_fg, 0.14); }
+.day-held { color: @lo_held; }
+.day-saver { color: @lo_accent; }
+.day-dark { color: @lo_well; }
+.day-now { color: @lo_fg; }
+.swatch { font-size: 11px; }
+.swatch.day-dark { color: shade(@lo_well, 1.6); }
+.hour { color: @lo_dim; font-size: 10px; }

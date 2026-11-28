@@ -5,7 +5,9 @@
 //! carries out the [`Effect`]s. Every rule about what happens when lives here
 //! with a test; the daemon only does I/O.
 
-use crate::board::{self, HackView, HistoryView, HoldView, LooseView, Rail, Snapshot, StationView};
+use crate::board::{
+    self, Day, DaySpan, HackView, HistoryView, HoldView, LooseView, Rail, Snapshot, StationView,
+};
 use crate::config::{AudioHold, Config, LockAt};
 use crate::holds::HoldSnapshot;
 use crate::lamp::Lamp;
@@ -90,6 +92,9 @@ pub enum Phase {
 /// How often a held station is checked again.
 pub const RETRY_SECS: u64 = 60;
 
+/// How far back the day's strip keeps the lamp's changes.
+const TWO_DAYS: u64 = 2 * 86_400;
+
 /// The lamp counts down to the saver over its last this many seconds.
 pub const COUNTDOWN: u64 = 5 * 60;
 
@@ -103,6 +108,8 @@ pub struct Entry {
     pub at: u64,
     pub what: String,
     pub why: String,
+    /// The hacks a saver run showed.
+    pub hacks: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +156,8 @@ pub struct Model {
     holds: HoldSnapshot,
     /// Audition is running.
     auditioning: bool,
+    /// When the lamp's class changed, for the day's strip.
+    timeline: VecDeque<(u64, &'static str)>,
 }
 
 impl Model {
@@ -199,6 +208,7 @@ impl Model {
             idle_from: None,
             holds: HoldSnapshot::default(),
             auditioning: false,
+            timeline: VecDeque::from([(0, "armed")]),
         }
     }
 
@@ -206,7 +216,73 @@ impl Model {
         if self.history.len() == HISTORY {
             self.history.pop_front();
         }
-        self.history.push_back(Entry { at: self.now, what: what.into(), why: why.into() });
+        self.history.push_back(Entry {
+            at: self.now,
+            what: what.into(),
+            why: why.into(),
+            hacks: Vec::new(),
+        });
+    }
+
+    /// A saver run ended after `secs`, having shown `hacks`: the entry that
+    /// started it says how long it ran and what it showed.
+    pub fn attach_run(&mut self, hacks: Vec<String>, secs: u64) {
+        if let Some(e) = self.history.iter_mut().rev().find(|e| e.what == "Saver started")
+            && e.hacks.is_empty()
+        {
+            e.why = format!("{} \u{b7} ran {}", e.why, round_minutes(secs));
+            e.hacks = hacks;
+        }
+    }
+
+    /// Notes the lamp's class when it changes, for the day's strip.
+    fn mark(&mut self) {
+        let class = match self.lamp().class.as_str() {
+            "held" => "held",
+            "saver" => "saver",
+            "dark" => "dark",
+            _ => "armed",
+        };
+        if self.timeline.back().map(|(_, c)| *c) != Some(class) {
+            self.timeline.push_back((self.now, class));
+        }
+        while self.timeline.len() > 2
+            && self.timeline.get(1).is_some_and(|(at, _)| self.now.saturating_sub(*at) > TWO_DAYS)
+        {
+            self.timeline.pop_front();
+        }
+    }
+
+    /// Today since local midnight, which is `midnight` on the daemon's clock
+    /// (negative when the daemon started later in the day).
+    pub fn day(&self, midnight: i64) -> Day {
+        let day = 86_400.0;
+        let share = |at: i64| ((at - midnight) as f64 / day).clamp(0.0, 1.0) as f32;
+        // Whole minutes: the strip needn't redraw on every tick.
+        let now = self.now / 60 * 60;
+        let mut out = Day { now: share(now as i64), ..Default::default() };
+        let mut mins = [0u64; 3];
+        for (i, (at, class)) in self.timeline.iter().enumerate() {
+            let end = self.timeline.get(i + 1).map(|(t, _)| *t).unwrap_or(now).min(now) as i64;
+            let start = (*at as i64).max(midnight);
+            if end <= start {
+                continue;
+            }
+            out.spans.push(DaySpan {
+                from: share(start),
+                to: share(end),
+                state: class.to_string(),
+            });
+            let m = (end - start) as u64 / 60;
+            match *class {
+                "saver" => mins[0] += m,
+                "held" => mins[1] += m,
+                "dark" => mins[2] += m,
+                _ => {}
+            }
+        }
+        [out.saver_mins, out.held_mins, out.dark_mins] = mins;
+        out
     }
 
     /// The transitions so far, oldest first.
@@ -222,6 +298,7 @@ impl Model {
         hack: Option<String>,
         hacks: Vec<HackView>,
         up_next: Vec<String>,
+        midnight: i64,
     ) -> Snapshot {
         let lamp = self.lamp();
         let headline = match lamp.class.as_str() {
@@ -250,6 +327,7 @@ impl Model {
                     time: clock(e.at),
                     what: e.what.clone(),
                     why: e.why.clone(),
+                    hacks: e.hacks.clone(),
                 })
                 .collect(),
             idle_mins: self.idle_secs() / 60,
@@ -257,6 +335,7 @@ impl Model {
             holding: self.holding(),
             hold_mins: self.manual_left().map(|s| s.div_ceil(60)),
             up_next,
+            day: self.day(midnight),
             lamp,
         }
     }
@@ -487,6 +566,7 @@ impl Model {
             }
         }
         dedup_retries(&mut out);
+        self.mark();
         out
     }
 
@@ -880,7 +960,7 @@ mod tests {
         assert!(h[0].effect.contains("dark only"), "{}", h[0].effect);
         m.step(0, Event::Hold { secs: 600 });
         assert!(m.holding()[0].mine);
-        let s = m.snapshot(&|_| String::new(), None, vec![], vec!["starfield".into()]);
+        let s = m.snapshot(&|_| String::new(), None, vec![], vec!["starfield".into()], 0);
         assert_eq!(s.hold_mins, Some(10));
         assert_eq!(s.rail.saver, Some(15));
         assert_eq!(s.rail.lock, Some(60), "the lock comes with the dark");
@@ -895,6 +975,23 @@ mod tests {
         assert!(m.lamp().tooltip.contains("auditioning"), "{}", m.lamp().tooltip);
         assert_eq!(m.step(950, Event::Audition { on: false }), [Retry { after: 0 }]);
         assert_eq!(m.step(950, Event::Retry { holds: quiet(), locked: false }), [StartSaver]);
+    }
+
+    #[test]
+    fn the_day_strip_spans_each_state_and_the_run_says_what_it_showed() {
+        let mut m = model("");
+        reach(&mut m, 900, Station::Saver, quiet());
+        m.step(1500, Event::Resumed);
+        m.attach_run(vec!["starfield".into(), "night-mail".into()], 600);
+        let day = m.day(-3600);
+        let states: Vec<_> = day.spans.iter().map(|s| s.state.as_str()).collect();
+        assert_eq!(states, ["armed", "saver"]);
+        assert_eq!(day.saver_mins, 10);
+        assert!((day.spans[1].from - 4500.0 / 86_400.0).abs() < 1e-4);
+        let s = m.snapshot(&|_| String::new(), None, vec![], vec![], -3600);
+        let started = s.history.iter().find(|h| h.what == "Saver started").unwrap();
+        assert_eq!(started.hacks, ["starfield", "night-mail"]);
+        assert!(started.why.ends_with("ran 10m"), "{}", started.why);
     }
 
     #[test]
@@ -963,10 +1060,10 @@ mod tests {
     fn the_snapshot_is_newest_first_and_names_the_hack_only_while_it_runs() {
         let mut m = model("");
         let clock = |t: u64| format!("t{t}");
-        assert_eq!(m.snapshot(&clock, Some("Starfield".into()), vec![], vec![]).hack, None);
+        assert_eq!(m.snapshot(&clock, Some("Starfield".into()), vec![], vec![], 0).hack, None);
         m.step(5, Event::Now);
         m.step(9, Event::Hold { secs: 3600 });
-        let s = m.snapshot(&clock, Some("Starfield".into()), vec![], vec![]);
+        let s = m.snapshot(&clock, Some("Starfield".into()), vec![], vec![], 0);
         assert_eq!(s.hack.as_deref(), Some("Starfield"));
         assert_eq!(s.headline, "Saver running");
         assert_eq!(s.history[0].what, "Held");
@@ -1011,7 +1108,7 @@ mod tests {
         m.step(9, Event::Cheap { why: None });
         let told: Vec<_> = m.history().map(|e| e.what.as_str()).collect();
         assert_eq!(told, ["Cheap mode", "Full rate"]);
-        assert_eq!(m.snapshot(&|_| String::new(), None, vec![], vec![]).cheap, None);
+        assert_eq!(m.snapshot(&|_| String::new(), None, vec![], vec![], 0).cheap, None);
     }
 
     #[test]

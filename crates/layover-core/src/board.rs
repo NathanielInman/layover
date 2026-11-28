@@ -48,6 +48,9 @@ pub struct Snapshot {
     /// The hacks the next run starts with, by id, in order.
     #[serde(default)]
     pub up_next: Vec<String>,
+    /// Today so far, since the daemon started.
+    #[serde(default)]
+    pub day: Day,
 }
 
 /// Where the stations sit on the rail, in minutes from the last input;
@@ -110,6 +113,30 @@ pub struct HistoryView {
     pub time: String,
     pub what: String,
     pub why: String,
+    /// The hacks a saver run showed, by id, in order.
+    #[serde(default)]
+    pub hacks: Vec<String>,
+}
+
+/// A stretch of today in one state, for the History tab's strip.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DaySpan {
+    /// Where it starts and ends, as shares of the local day (0 to 1).
+    pub from: f32,
+    pub to: f32,
+    /// `armed`, `held`, `saver` or `dark`.
+    pub state: String,
+}
+
+/// Today so far: its stretches, where now is, and the minutes in each
+/// state.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Day {
+    pub spans: Vec<DaySpan>,
+    pub now: f32,
+    pub saver_mins: u64,
+    pub held_mins: u64,
+    pub dark_mins: u64,
 }
 
 /// From the daemon to the drawer, one per line.

@@ -172,15 +172,17 @@ Three tabs. **Now** shows the state and why, the idle line drawn to scale
 with how long you've been away and how long until each station, what is
 holding the line and what each hold stops, holds of 30m to 4h, the next few
 hacks with Start saver now and Skip, and anything looser than shipped with
-what it risks. **Hacks** is a gallery of every hack with its picture
-(hover to play it), a switch to take it out of the rotation and a star to
-bring it up twice a round; click one for its sheet with its loop, how it
-changes over a few minutes, a 20 second Preview and its wear numbers against
-your budget. **Audition** (on the Hacks tab, or `layover audition`) steps
-through every hack on the screen itself: arrows step, `k` keeps one or
-leaves it out, `s` stars it, Escape ends it. **History** shows the last 50 things the line
-did, with the time and why. Keys: `1` to `3`, `n` start, `h` hold, `+` and
-`-` lengthen or shorten a hold, `r` release, `/` find a hack, Escape. It takes your waybar's font and colors.
+what it risks. **Hacks** is a gallery of every hack with its picture (hover
+to play it), a switch to take it out of the rotation and a star to bring it
+up twice a round; click one for its sheet with its loop, how it changes over
+a few minutes, a 20 second Preview and its wear numbers against your budget.
+**Audition** (on the Hacks tab, or `layover audition`) steps through every
+hack on the screen itself: arrows step, `k` keeps one or leaves it out, `s`
+stars it, Escape ends it. **History** shows today as a strip (armed, saver,
+held, dark) and the last 50 things the line did, with the time and why; a
+saver run shows the hacks it showed. Keys: `1` to `3`, `n` start, `h` hold,
+`+` and `-` lengthen or shorten a hold, `r` release, `/` find a hack,
+Escape. It takes your waybar's font and colors.
 
 ## Commands
 

@@ -352,6 +352,16 @@ impl Daemon {
     /// hack it showed, so every hack gets its turn across short runs.
     fn finish_run(&mut self, elapsed: f32) {
         let mut shown = layover_hacks::turns(&self.run, &self.cfg.care, elapsed);
+        if !self.run.is_empty() {
+            let mut ids: Vec<String> = Vec::new();
+            for i in 0..shown {
+                let id = self.run[i % self.run.len()].id;
+                if ids.last().map(String::as_str) != Some(id) && ids.len() < 12 {
+                    ids.push(id.into());
+                }
+            }
+            self.model.attach_run(ids, elapsed as u64);
+        }
         if self.pinned.take().is_some() {
             shown = shown.saturating_sub(1);
         }
@@ -554,7 +564,8 @@ impl Daemon {
                 }
             })
             .collect();
-        let snapshot = self.model.snapshot(&clock, hack, hacks, up_next);
+        let midnight = crate::log::midnight_at(started + self.now()) as i64 - started as i64;
+        let snapshot = self.model.snapshot(&clock, hack, hacks, up_next, midnight);
         serde_json::to_string(&BoardEvent::Snapshot { snapshot: Box::new(snapshot) })
             .expect("a snapshot is plain data")
     }

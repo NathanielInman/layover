@@ -12,6 +12,8 @@ fn main() {
 #[cfg(target_os = "linux")]
 mod anim;
 #[cfg(target_os = "linux")]
+mod day;
+#[cfg(target_os = "linux")]
 mod drawer;
 #[cfg(target_os = "linux")]
 mod hacks;

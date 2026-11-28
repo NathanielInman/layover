@@ -29,6 +29,18 @@ pub fn clock_at(unix: u64) -> String {
     }
 }
 
+/// The Unix second of the local midnight that starts the day `unix` falls
+/// in.
+pub fn midnight_at(unix: u64) -> u64 {
+    // SAFETY: localtime_r writes only into our own struct.
+    unsafe {
+        let t = unix as libc::time_t;
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        unix.saturating_sub((tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec) as u64)
+    }
+}
+
 /// Local time as `2026-11-20 14:02:11`.
 pub fn stamp() -> String {
     // SAFETY: time and localtime_r write only into our own struct.
