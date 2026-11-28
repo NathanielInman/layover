@@ -56,8 +56,8 @@ below names what the renderer would gain to cover it.
 - **Text hacks** fall under `text_rotate` (3 minutes) and must move. Rain and
   crawls move; terminals and fake crash screens do not.
 - **Flashing.** Lightning, Hypnowheel, Greynetic and Popsquares flash or
-  strobe. That is a people problem as much as a panel one; it waits on a
-  decision about a flash cap.
+  strobe. Layover skips strobing hacks for photosensitivity (listed under Not
+  ported) instead of adding a flash cap.
 
 ## The catalog
 
@@ -134,3 +134,5 @@ unconfigured or empty), and still run through the care pass and wear test.
 - **Sonar**: pings the local network.
 - **Lament, Flying Toasters, Pacman**: built on someone else's film, product
   or game.
+- **Lightning, Hypnowheel, Greynetic, Popsquares**: flash or strobe; skipped
+  for photosensitivity.

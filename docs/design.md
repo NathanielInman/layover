@@ -34,6 +34,9 @@ OLED or not.
    monitor at risk. `layover check`, the daemon log and the lamp's tooltip
    list every value looser than shipped.
 
+Layover also skips strobing or flashing hacks for photosensitivity rather than
+trying to cap their flash rate.
+
 A change that weakens any of these needs its own commit that says so.
 
 ## The idle line
