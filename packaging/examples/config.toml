@@ -145,6 +145,14 @@ gpu = "auto"
 # every hack.
 hacks = []
 
+# Hacks left out of the rotation, by id. The drawer's switch writes this
+# list, so a hack added in a later release joins the rotation on its own.
+skip = []
+
+# Starred hacks: each comes up twice a round, half a round apart. The
+# drawer's star writes this list.
+often = []
+
 # Smooth stair-steps with a cheap FXAA pass in the care shader. Useful when
 # `power.render_scale` is below 1; set false to turn it off.
 antialias = true

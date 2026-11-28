@@ -61,8 +61,8 @@ fn config(checks: &mut Vec<Check>) -> Config {
     } else {
         Check::info("config", "no config file, using the shipped defaults")
     });
-    if let Err(e) = layover_hacks::rotation(&cfg.saver.hacks) {
-        checks.push(Check::fail("hacks", format!("[saver] hacks: {e}")));
+    if let Err(e) = layover_hacks::run_order(&cfg.saver) {
+        checks.push(Check::fail("hacks", format!("[saver] {e}")));
     }
     match cfg.loosened().len() {
         0 => {}

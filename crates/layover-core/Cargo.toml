@@ -14,4 +14,5 @@ bar-anchor.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 anyhow.workspace = true

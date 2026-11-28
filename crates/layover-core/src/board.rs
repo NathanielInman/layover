@@ -1,7 +1,7 @@
 //! What the drawer shows: the snapshot the daemon streams to `layover-board`
 //! on every change, and the events that open and close it.
 
-use crate::config::{Config, LockAt};
+use crate::config::{Config, LockAt, Weight};
 use crate::lamp::Lamp;
 use crate::span::Span;
 use bar_anchor::Anchor;
@@ -57,6 +57,11 @@ pub struct HackView {
     pub name: String,
     pub about: String,
     pub in_rotation: bool,
+    /// How often it comes up: the drawer's switch and star.
+    pub weight: Weight,
+    /// Its family for the drawer's filters: Fields, 3D, Growth, Particles,
+    /// Lines or Text.
+    pub kind: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

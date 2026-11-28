@@ -262,13 +262,67 @@ pub enum Gpu {
 pub struct Saver {
     /// Hacks in the rotation, by id. Empty means every hack, in order.
     pub hacks: Vec<String>,
+    /// Hacks left out of the rotation. The drawer's switch writes this, so
+    /// a hack added in a later release joins the rotation on its own.
+    pub skip: Vec<String>,
+    /// Starred hacks: each comes up twice per round, half a round apart.
+    pub often: Vec<String>,
     /// Smooth stair-steps in the care pass with a lightweight FXAA pass.
     pub antialias: bool,
 }
 
 impl Default for Saver {
     fn default() -> Self {
-        Saver { hacks: Vec::new(), antialias: true }
+        Saver { hacks: Vec::new(), skip: Vec::new(), often: Vec::new(), antialias: true }
+    }
+}
+
+/// How often a hack comes up: the drawer's switch and star, and `layover
+/// rotation <id> <weight>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Weight {
+    /// Left out of the rotation (`saver.skip`).
+    Never,
+    /// Once a round.
+    Sometimes,
+    /// Twice a round (`saver.often`).
+    Often,
+}
+
+impl std::str::FromStr for Weight {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "never" | "off" => Ok(Weight::Never),
+            "sometimes" | "on" => Ok(Weight::Sometimes),
+            "often" | "star" => Ok(Weight::Often),
+            _ => Err(format!("`{s}` is not a weight; use never, sometimes or often")),
+        }
+    }
+}
+
+impl Weight {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Weight::Never => "never",
+            Weight::Sometimes => "sometimes",
+            Weight::Often => "often",
+        }
+    }
+}
+
+impl Saver {
+    /// How often `id` comes up under this config.
+    pub fn weight(&self, id: &str) -> Weight {
+        let listed = self.hacks.is_empty() || self.hacks.iter().any(|h| h == id);
+        if !listed || self.skip.iter().any(|h| h == id) {
+            Weight::Never
+        } else if self.often.iter().any(|h| h == id) {
+            Weight::Often
+        } else {
+            Weight::Sometimes
+        }
     }
 }
 

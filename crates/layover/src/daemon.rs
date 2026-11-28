@@ -7,7 +7,8 @@ use crate::log::log;
 use crate::wayland::{self, Screens};
 use anyhow::{Context, Result, bail};
 use layover_core::board::{BoardEvent, HackView};
-use layover_core::config::Config;
+use layover_core::config::{Config, Weight};
+use layover_core::config_edit;
 use layover_core::feeds::{self, Desk, Feed, LampLine, LineUpdate, Reading};
 use layover_core::holds::{self, HoldSnapshot};
 use layover_core::lamp::Lamp;
@@ -118,7 +119,7 @@ pub fn run(cfg: Config) -> Result<()> {
 
     spawn_listener(listener, tx.clone());
     crate::feeds::start(&cfg.feeds, &tx);
-    let rotation = layover_hacks::rotation(&cfg.saver.hacks).map_err(|e| anyhow::anyhow!(e))?;
+    let rotation = layover_hacks::run_order(&cfg.saver).map_err(|e| anyhow::anyhow!(e))?;
     let started_wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -189,8 +190,17 @@ impl Daemon {
             Msg::WaylandGone(e) => bail!("lost the Wayland connection: {e}"),
             Msg::Note(n) => log(&n),
             Msg::Request(req, reply) => {
+                if let Request::Rotation { hack, weight } = &req {
+                    let answer = match self.set_weight(hack, *weight) {
+                        Ok(()) => Reply::Lamp(self.model.lamp()),
+                        Err(e) => Reply::Error { error: format!("{e:#}") },
+                    };
+                    let _ = reply.send(answer);
+                    return Ok(());
+                }
                 let event = match req {
                     Request::Status | Request::Watch | Request::Board | Request::Line => None,
+                    Request::Rotation { .. } => None,
                     Request::Hold { secs } => Some(Event::Hold { secs }),
                     Request::Release => Some(Event::Release),
                     Request::Now => Some(Event::Now),
@@ -259,6 +269,23 @@ impl Daemon {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Writes how often `id` comes up into the config and takes the new
+    /// rotation. A change that would leave no hack in the rotation is
+    /// refused before anything is written.
+    fn set_weight(&mut self, id: &str, weight: Weight) -> Result<()> {
+        if layover_hacks::find(id).is_none() {
+            bail!("no hack called `{id}` (`layover hacks` lists them)");
+        }
+        let path = paths::config_file();
+        let (text, cfg) = config_edit::plan_weight(&path, id, weight)?;
+        let rotation = layover_hacks::run_order(&cfg.saver).map_err(|e| anyhow::anyhow!(e))?;
+        config_edit::write(&path, &text)?;
+        log(&format!("rotation: {id} {}", weight.as_str()));
+        self.cfg.saver = cfg.saver;
+        self.rotation = rotation;
         Ok(())
     }
 
@@ -416,6 +443,8 @@ impl Daemon {
                 name: h.name.into(),
                 about: h.about.into(),
                 in_rotation: self.rotation.iter().any(|r| r.id == h.id),
+                weight: self.cfg.saver.weight(h.id),
+                kind: layover_hacks::kind(h).into(),
             })
             .collect();
         let snapshot = self.model.snapshot(&clock, hack, hacks);

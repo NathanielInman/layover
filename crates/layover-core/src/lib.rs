@@ -3,6 +3,7 @@
 
 pub mod board;
 pub mod config;
+pub mod config_edit;
 pub mod doctor;
 pub mod feeds;
 pub mod holds;

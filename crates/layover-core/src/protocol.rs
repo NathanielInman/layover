@@ -1,5 +1,6 @@
 //! The daemon's socket: one JSON object per line each way.
 
+use crate::config::Weight;
 use crate::lamp::Lamp;
 use bar_anchor::Anchor;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,12 @@ pub enum Request {
     /// The saver subscribes: the Departure Board's rows and cheap mode, as a
     /// `feeds::LineUpdate` per line, now and on every change.
     Line,
+    /// Set how often a hack comes up; the daemon writes `[saver]` in
+    /// layover.toml, keeping its comments.
+    Rotation {
+        hack: String,
+        weight: Weight,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +67,13 @@ mod tests {
             Request::Toggle { anchor: None }
         );
         assert_eq!(serde_json::from_str::<Request>(r#"{"cmd":"board"}"#).unwrap(), Request::Board);
+        assert_eq!(
+            serde_json::from_str::<Request>(
+                r#"{"cmd":"rotation","hack":"starfield","weight":"often"}"#
+            )
+            .unwrap(),
+            Request::Rotation { hack: "starfield".into(), weight: Weight::Often }
+        );
     }
 
     #[test]

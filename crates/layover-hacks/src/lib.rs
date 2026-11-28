@@ -720,9 +720,104 @@ pub fn rotation(ids: &[String]) -> Result<Vec<&'static Hack>, String> {
         .collect()
 }
 
+/// The order the saver runs under `[saver]`: `hacks` (every hack when
+/// empty) without `skip`, and each `often` hack a second time half a round
+/// after the first. Unknown ids, or a rotation left empty, come back as
+/// errors for the config check.
+pub fn run_order(saver: &layover_core::config::Saver) -> Result<Vec<&'static Hack>, String> {
+    let base = rotation(&saver.hacks)?;
+    for (key, ids) in [("skip", &saver.skip), ("often", &saver.often)] {
+        if let Some(id) = ids.iter().find(|id| find(id).is_none()) {
+            return Err(format!("{key}: no hack called `{id}` (`layover hacks` lists them)"));
+        }
+    }
+    let base: Vec<_> = base.into_iter().filter(|h| !saver.skip.iter().any(|s| s == h.id)).collect();
+    if base.is_empty() {
+        return Err("every hack is left out (saver.skip): keep at least one in the rotation".into());
+    }
+    let n = base.len();
+    // A second turn half a round later; with fewer than three hacks it would
+    // follow its own first turn, so a star changes nothing there.
+    let mut keyed: Vec<(f32, &'static Hack)> =
+        base.iter().enumerate().map(|(i, h)| (i as f32, *h)).collect();
+    if n >= 3 {
+        for (i, h) in base.iter().enumerate() {
+            if saver.often.iter().any(|o| o == h.id) {
+                keyed.push((((i + n / 2) % n) as f32 + 0.5, *h));
+            }
+        }
+    }
+    keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
+    Ok(keyed.into_iter().map(|(_, h)| h).collect())
+}
+
+/// The family a hack belongs to, from what the renderer gives it: the
+/// drawer's filter chips.
+pub fn kind(h: &Hack) -> &'static str {
+    if h.board || h.text_heavy {
+        "Text"
+    } else if h.mesh.is_some() || h.raymarch {
+        "3D"
+    } else if h.particles.is_some() {
+        "Particles"
+    } else if h.feedback.is_some() {
+        "Growth"
+    } else if h.lines.is_some() {
+        "Lines"
+    } else {
+        "Fields"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn saver(skip: &[&str], often: &[&str]) -> layover_core::config::Saver {
+        layover_core::config::Saver {
+            skip: skip.iter().map(|s| s.to_string()).collect(),
+            often: often.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn skipped_hacks_leave_and_starred_ones_come_twice_half_a_round_apart() {
+        let all = rotation(&[]).unwrap();
+        let order = run_order(&saver(&["starfield"], &[])).unwrap();
+        assert_eq!(order.len(), all.len() - 1);
+        assert!(order.iter().all(|h| h.id != "starfield"));
+        let order = run_order(&saver(&[], &["night-mail"])).unwrap();
+        let at: Vec<_> = order
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.id == "night-mail")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(at.len(), 2);
+        let gap = at[1] - at[0];
+        assert!(
+            gap.abs_diff(order.len() / 2) <= 1,
+            "half a round apart: {at:?} of {}",
+            order.len()
+        );
+    }
+
+    #[test]
+    fn the_rotation_never_empties_and_names_unknown_ids() {
+        let every: Vec<&str> = HACKS.iter().map(|h| h.id).collect();
+        assert!(run_order(&saver(&every, &[])).unwrap_err().contains("keep at least one"));
+        assert!(run_order(&saver(&["nope"], &[])).unwrap_err().contains("nope"));
+        assert!(run_order(&saver(&[], &["nope"])).unwrap_err().contains("often"));
+    }
+
+    #[test]
+    fn every_hack_has_a_family() {
+        for h in HACKS {
+            assert!(["Text", "3D", "Particles", "Growth", "Lines", "Fields"].contains(&kind(h)));
+        }
+        assert_eq!(kind(find("departure-board").unwrap()), "Text");
+    }
 
     #[test]
     fn ids_are_unique_and_kebab_case() {

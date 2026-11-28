@@ -236,7 +236,17 @@ fading ones pass deterministically and Z-occlude near geometry over far geometry
 
 `[bar]`, `[drawer]` and `[theme]` set where the drawer opens from, its size
 and its look; the rest is the idle line, holds, care, power and the saver
-(`hacks` and `antialias`, which defaults to `true`).
+(`hacks`, `skip`, `often` and `antialias`, which defaults to `true`).
+
+The rotation is `saver.hacks` (every hack when empty, in order) without
+`saver.skip`; each hack in `saver.often` takes a second turn half a round
+after its first (with three or more in the rotation). The drawer's switch
+and star, Audition and `layover rotation <id> never|sometimes|often` write
+`skip` and `often`, so a hack added in a later release joins on its own.
+They go through the daemon, which edits `layover.toml` with `toml_edit`
+(comments and layout stay; a symlinked config stays a symlink) and refuses
+a change that would leave the rotation empty. Without a daemon,
+`layover rotation` edits the file itself.
 
 `~/.config/layover/layover.toml` (`$LAYOVER_CONFIG_DIR` overrides the
 directory). `packaging/examples/config.toml` is the shipped file with every
@@ -281,8 +291,9 @@ One JSON object per line. Requests: `{"cmd":"status"}`, `{"cmd":"watch"}`
 `{"cmd":"hold","secs":N}`, `{"cmd":"release"}`, `{"cmd":"now"}` (start the
 saver now), `{"cmd":"stop"}`, `{"cmd":"toggle","anchor":A}` and
 `{"cmd":"show","anchor":A}` (open the drawer from the bar, `A` being
-bar-anchor's `Anchor` or absent to center it), `{"cmd":"board"}` and
-`{"cmd":"line"}`. Replies
+bar-anchor's `Anchor` or absent to center it), `{"cmd":"board"}`,
+`{"cmd":"line"}` and `{"cmd":"rotation","hack":ID,"weight":W}` (`W` is
+`never`, `sometimes` or `often`). Replies
 are a lamp `{"text","alt","class","tooltip"}` or `{"error"}`.
 
 `line` keeps the connection open for the saver and sends

@@ -185,7 +185,9 @@ layover now | stop             start or stop the saver
 layover hold 1h | release      hold the line, or end the hold
 layover check                  check the config and list loosened values
 layover doctor                 check the setup (exits 1 when something is broken)
-layover hacks                  list the hacks
+layover hacks                  list the hacks (* in the rotation, ** starred)
+layover rotation <id> never|sometimes|often
+                               take a hack out of the rotation, put it back, or star it
 layover saver --hack starfield --for 20s
                                show a hack now, without the daemon
 layover wear [<id>...]         run the wear test against your config and write heat maps

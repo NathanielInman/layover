@@ -8,7 +8,8 @@ mod saver;
 mod wayland;
 
 use anyhow::{Context, Result, anyhow, bail};
-use layover_core::config::{Concern, Config};
+use layover_core::config::{Concern, Config, Weight};
+use layover_core::config_edit;
 use layover_core::lamp::Lamp;
 use layover_core::paths;
 use layover_core::protocol::{Reply, Request};
@@ -36,7 +37,9 @@ Usage:
   layover check                  check the config and list every value looser than shipped
   layover doctor                 check the setup: the daemon, the compositor, Vulkan,
                                  pactl, the lock, waybar and the drawer
-  layover hacks                  list the hacks
+  layover hacks                  list the hacks (* in the rotation, ** starred)
+  layover rotation <id> never|sometimes|often
+                                 take a hack out of the rotation, put it back, or star it
   layover saver [--hack <id>]... [--for <duration>]
                                  show hacks now, without the daemon
   layover wear [<id>...] [--minutes <n>] [--out <dir>]
@@ -71,7 +74,7 @@ fn run(args: &[String]) -> Result<i32> {
     match cmd.as_str() {
         "daemon" => {
             let cfg = load_config()?;
-            layover_hacks::rotation(&cfg.saver.hacks).map_err(|e| anyhow!("[saver] hacks: {e}"))?;
+            layover_hacks::run_order(&cfg.saver).map_err(|e| anyhow!("[saver] {e}"))?;
             daemon::run(cfg)?;
             Ok(0)
         }
@@ -115,17 +118,17 @@ fn run(args: &[String]) -> Result<i32> {
         }
         "hacks" => {
             let cfg = load_config().unwrap_or_default();
-            let on: Vec<&str> = layover_hacks::rotation(&cfg.saver.hacks)
-                .unwrap_or_default()
-                .iter()
-                .map(|h| h.id)
-                .collect();
             for h in HACKS {
-                let mark = if on.contains(&h.id) { "*" } else { " " };
-                println!("{mark} {:<16} {}", h.id, h.about);
+                let mark = match cfg.saver.weight(h.id) {
+                    Weight::Never => " ",
+                    Weight::Sometimes => "*",
+                    Weight::Often => "**",
+                };
+                println!("{mark:<2} {:<16} {}", h.id, h.about);
             }
             Ok(0)
         }
+        "rotation" => rotation_cmd(rest),
         "wear" => wear_cmd(rest),
         "-V" | "--version" | "version" => {
             println!("layover {}", env!("CARGO_PKG_VERSION"));
@@ -204,8 +207,8 @@ fn check() -> Result<i32> {
         }
     );
     println!("{}", cfg.summary());
-    if let Err(e) = layover_hacks::rotation(&cfg.saver.hacks) {
-        println!("[saver] hacks: {e}");
+    if let Err(e) = layover_hacks::run_order(&cfg.saver) {
+        println!("[saver] {e}");
         return Ok(1);
     }
     for n in cfg.notes() {
@@ -231,6 +234,36 @@ fn check() -> Result<i32> {
     Ok(0)
 }
 
+/// `layover rotation <id> <weight>`: through the daemon, so its rotation
+/// changes at once; straight into the config when no daemon runs.
+fn rotation_cmd(rest: &[String]) -> Result<i32> {
+    let [id, weight] = rest else {
+        bail!("usage: layover rotation <id> never|sometimes|often");
+    };
+    let weight: Weight = weight.parse().map_err(|e: String| anyhow!(e))?;
+    if layover_hacks::find(id).is_none() {
+        bail!("no hack called `{id}` (`layover hacks` lists them)");
+    }
+    let req = Request::Rotation { hack: id.clone(), weight };
+    if connect().is_ok() {
+        ask(&req)?;
+    } else {
+        let path = paths::config_file();
+        let (text, cfg) = config_edit::plan_weight(&path, id, weight)?;
+        layover_hacks::run_order(&cfg.saver).map_err(|e| anyhow!(e))?;
+        config_edit::write(&path, &text)?;
+    }
+    println!(
+        "{id}: {}",
+        match weight {
+            Weight::Never => "out of the rotation",
+            Weight::Sometimes => "in the rotation",
+            Weight::Often => "starred, twice a round",
+        }
+    );
+    Ok(0)
+}
+
 fn saver_cmd(rest: &[String]) -> Result<i32> {
     let cfg = load_config()?;
     let mut ids = Vec::new();
@@ -246,8 +279,12 @@ fn saver_cmd(rest: &[String]) -> Result<i32> {
             other => bail!("unknown option `{other}`"),
         }
     }
-    let ids = if ids.is_empty() { cfg.saver.hacks.clone() } else { ids };
-    let hacks = layover_hacks::rotation(&ids).map_err(|e| anyhow!(e))?;
+    let hacks = if ids.is_empty() {
+        layover_hacks::run_order(&cfg.saver)
+    } else {
+        layover_hacks::rotation(&ids)
+    }
+    .map_err(|e| anyhow!(e))?;
     saver::run(&cfg, saver::Options { hacks, run_for })?;
     Ok(0)
 }
