@@ -5,14 +5,15 @@ A 22 second loop on the same desktop as Roundhouse's, Switchyard's,
 Tannoy's and Tablet's heroes, under the floating Platform bar. A terminal
 shows `layover wear`: every hack passing rule one, with the numbers the
 wear test really measures. A click on the moon springs the drawer out of
-it: Now with the idle line, Hacks with the same wear numbers, History with
-what the line did and why, and a click outside closes it. The desk goes
+it: Now with the idle line to scale, Hacks as a gallery with a star and a
+switch each, History with today as a strip and what the line did and why,
+and a click outside closes it. The desk goes
 quiet, the clock jumps fifteen
 minutes and the saver fades in over everything, the bar too: Night Mail's
 train crosses the hills under a moon that climbs across the sky, then the
 saver hands off through black to Signal Lamps. A nudge of the mouse ends it
-at once. `layover hold 1h` turns Layover's lamp amber, and its tooltip says
-why; `layover release` turns it dim again.
+at once. `layover hold 1h` turns Layover's lamp amber with "1h" beside it,
+and its tooltip says why; `layover release` turns it dim again.
 
 The drawer is drawn by `draw_drawer()` in its own coordinates at its real
 size (420 px wide, as `drawer.width` defaults), one tab at a time, so the
@@ -44,15 +45,16 @@ ALT = (
     "A floating waybar of frosted pills over a desktop with a terminal, where layover wear lists every hack "
     "passing rule one: Night Mail, Frost Aurora, Signal Lamps, Starfield, Menger Vault, Quasi Lattice, Ripple Tank, Moire Loom, Julia Filigree, Prism Barrel, Helix Tunnel, Pulsar Ridge, Truchet Weave, Voronoi Glass, Apollonian Lace, Marble Vein, Flux Grid, Lava Drift, Klein Fold, Reagent Bloom, Fault Strata, Ember Plume, Spore Cloud, Crystal Reef, Flame Veil, Star Shell, Tidal Spiral, Silk Flurry, Fluid Beads, Silver Shoal, Wisp Swarm, Ribbon Trace, Cycloid Rose, Hyper Cell and the Departure Board with their average level, longest "
     "lit dwell and hottest area. Layover's lamp in the bar is a dim moon. A click on it springs the drawer out: "
-    "the Now tab says Armed with the idle line, saver at 15m, lock with the dark, screens off at 1h, and buttons "
-    "to start the saver or hold; the Hacks tab lists the thirty-five hacks with the same wear numbers, each passing and "
-    "in the rotation with a Preview button; the History tab lists what the line did and why. A click outside "
+    "the Now tab says Armed with the idle line drawn to scale, the saver at 15m and the lock and screens off at 1h, "
+    "nothing holding it, holds of 30m to 4h, and the hacks up next with Start saver now and Skip; the Hacks tab is a "
+    "gallery of pictures of each hack with its family, passes, a star and a switch for the rotation, under a search box, "
+    "filter chips, Measure and Audition; the History tab shows today as a strip and what the line did and why. A click outside "
     "closes it. The desk goes quiet, the clock jumps "
     "from 14:28 to 14:43, and the saver fades in over the whole screen, bar included: a dim mail train with lit "
     "windows crosses dark hills while the moon climbs across a field of drifting stars and signal lamps scroll "
     "past. It hands off through black to Signal Lamps, soft red, green, amber and frost lamps drifting out of "
     "focus. The mouse moves and the saver is gone at once. In the terminal layover hold 1h turns the lamp "
-    "amber, its tooltip says held by you for 1h more, and layover release turns it dim again."
+    "amber with 1h beside it, its tooltip says held by you for 1h more, and layover release turns it dim again."
 )
 
 
@@ -126,9 +128,8 @@ HISTORY = [
     ("14:26:12", "Screens on", "input came back"),
     ("14:25:40", "Screens off", "1h idle"),
     ("14:25:40", "Locked", "with the dark"),
-    ("13:40:03", "Saver started", "nothing holds it now"),
+    ("13:40:03", "Saver started", "nothing holds it now · ran 32m"),
     ("13:39:02", "The saver held", "mpv is keeping the screen on"),
-    ("12:58:31", "Hold released", "you released it"),
 ]
 TABS = ["Now", "Hacks", "History"]
 
@@ -166,67 +167,196 @@ def _button(o, spots, name, x, y, text, primary=False):
     return w
 
 
-def _now(o, spots, y):
-    reason = wrap(SUMMARY, 12, IW - 22)
-    h = 11 + 14 + 32 + len(reason) * 17 + 8 + 2 * 40 + 6 + 12 + 26 + 12
+def _card(o, y, h):
     o.append(f'<rect x="{PAD}" y="{y}" width="{IW}" height="{h}" rx="10" fill="{TILE}" stroke="{TILE_LINE}"/>')
+
+
+def _label(o, x, y, text):
+    o.append(tx(x, y, text, 10, DIM, 700, attrs='letter-spacing="1"'))
+
+
+def _rail(o, x, y, w):
+    """The idle line to scale: last input, the saver at 15m, the lock and
+    the dark at 1h, nobody idle yet."""
+    o.append(f'<rect x="{x}" y="{y - 2}" width="{w}" height="4" rx="2" fill="{FG}" fill-opacity=".14"/>')
+    for at, r in ((0, 5), (15, 7), (60, 7)):
+        cx = x + w * at / 60
+        o.append(f'<circle cx="{cx:.1f}" cy="{y}" r="{r - 1.2}" fill="{WELL}" stroke="{FG}" stroke-opacity=".55" stroke-width="2.4"/>')
+    o.append(tx(x - 4, y + 27, "0m", 10, DIM))
+    sx = x + w / 4
+    o.append(tx(sx, y + 14, "SAVER", 10, DIM, 400, "middle"))
+    o.append(tx(sx, y + 27, "15m", 10, FG, 400, "middle"))
+    o.append(tx(sx, y + 40, "in 15m", 10, DIM, 400, "middle"))
+    o.append(tx(x + w + 4, y + 14, "LOCK + SCREENS OFF", 10, DIM, 400, "end"))
+    o.append(tx(x + w + 4, y + 27, "1h", 10, FG, 400, "end"))
+    o.append(tx(x + w + 4, y + 40, "in 1h", 10, DIM, 400, "end"))
+
+
+def _chips(o, x, y, w, labels):
+    cw = (w - 5 * (len(labels) - 1)) / len(labels)
+    for i, t in enumerate(labels):
+        cx = x + i * (cw + 5)
+        o.append(f'<rect x="{cx:.1f}" y="{y}" width="{cw:.1f}" height="26" rx="8" fill="{TILE}" stroke="{TILE_LINE}"/>')
+        o.append(tx(cx + cw / 2, y + 17.5, t, 11.5, FG, 400, "middle"))
+
+
+def _now(o, spots, y):
     x = PAD + 11
-    o.append(tx(x, y + 22, "THE IDLE LINE", 10, DIM, 700, attrs='letter-spacing="1"'))
+    reason = wrap(SUMMARY, 12, IW - 22)
+    more = 17 * (len(reason) - 1)
+    h = 160 + more
+    _card(o, y, h)
+    _label(o, x, y + 22, "THE IDLE LINE")
     o.append(tx(x, y + 53, "Armed", 24, FG, 700))
-    yy = y + 72
-    for line in reason:
-        o.append(tx(x, yy, line, 12, FG))
-        yy += 17
-    yy += 2
-    cw = (IW - 22 - 6) / 2
-    for i, (name, at) in enumerate([("SAVER", "15m"), ("LOCK", "with the dark"), ("SCREENS OFF", "1h"), ("LOCK SCREEN OFF", "1m")]):
-        bx, by = x + (i % 2) * (cw + 6), yy + (i // 2) * 46
-        o.append(f'<rect x="{bx:.1f}" y="{by}" width="{cw:.1f}" height="40" rx="8" fill="{WELL}"/>')
-        o.append(tx(bx + 8, by + 15, name, 10, DIM, 700, attrs='letter-spacing="1"'))
-        o.append(tx(bx + 8, by + 32, at, 12.5, FG, 700))
-    yy += 2 * 46 + 4
-    bw = _button(o, spots, "now:start", x, yy, "Start saver now", primary=True)
-    _button(o, spots, "now:hold", x + bw + 6, yy, "Hold 1h")
+    for k, line in enumerate(reason):
+        o.append(tx(x, y + 76 + 17 * k, line, 12, FG))
+    _rail(o, x + 9, y + 106 + more, IW - 40)
+    y += h + 10
+    h = 92
+    _card(o, y, h)
+    _label(o, x, y + 22, "WHAT HOLDS THE LINE")
+    o.append(tx(x, y + 41, "Nothing holds it.", 11, DIM))
+    _chips(o, x, y + 56, IW - 22, ["30m", "1h", "2h", "4h"])
+    y += h + 10
+    h = 132
+    _card(o, y, h)
+    _label(o, x, y + 22, "UP NEXT")
+    sw = (IW - 22 - 18) / 5
+    px = x
+    for i, sketch in enumerate((_sketch_mail, _sketch_aurora, _sketch_lamps, _sketch_stars)):
+        pw = sw * 2 if i == 0 else sw
+        ph = pw * 9 / 32
+        sketch(o, px, y + 32, pw, ph)
+        px += pw + 6
+    o.append(tx(x, y + 32 + sw * 2 * 9 / 32 + 15, "Night Mail", 12, FG, 700))
+    bw = _button(o, spots, "now:start", x, y + 96, "Start saver now", primary=True)
+    _button(o, spots, "now:skip", x + bw + 6, y + 96, "Skip")
     return y + h
 
 
+PICS = [0]
+
+
+def _pic(o, x, y, w, h, body):
+    PICS[0] += 1
+    cid = f"pic{PICS[0]}"
+    o.append(f'<clipPath id="{cid}"><rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" rx="6"/></clipPath>')
+    o.append(f'<g clip-path="url(#{cid})"><rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" fill="#000"/>{body}</g>')
+
+
+def _sketch_mail(o, x, y, w, h):
+    win = "".join(f'<rect x="{x + w * (0.33 + k * 0.022):.1f}" y="{y + h * 0.78:.1f}" width="{w * 0.013:.1f}" height="{h * 0.04:.1f}" fill="{FROST}" fill-opacity=".8"/>' for k in range(14))
+    _pic(o, x, y, w, h, f'<rect x="{x}" y="{y + h * 0.84:.1f}" width="{w}" height="{h * 0.16:.1f}" fill="#0b0d10"/>'
+         f'<circle cx="{x + w * 0.55:.1f}" cy="{y + h * 0.26:.1f}" r="{h * 0.08:.1f}" fill="#c9ccc2" fill-opacity=".7"/>{win}')
+
+
+def _sketch_aurora(o, x, y, w, h):
+    PICS[0] += 1
+    fid = f"soft{PICS[0]}"
+    bands = f'<filter id="{fid}"><feGaussianBlur stdDeviation="{max(1.5, w / 90):.1f}"/></filter><g filter="url(#{fid})">' + "".join(
+        f'<rect x="{x + w * k / 9:.1f}" y="{y + h * 0.18:.1f}" width="{w / 9 + 1:.1f}" height="{h * (0.3 + 0.1 * math.sin(k)):.1f}" fill="{c}" fill-opacity=".28"/>'
+        for k, c in enumerate([GO, PURPLE, GO, FROST, PURPLE, GO, PURPLE, FROST, GO])) + "</g>"
+    _pic(o, x, y, w, h, bands + f'<path d="M{x},{y + h} L{x + w * 0.3:.1f},{y + h * 0.7:.1f} L{x + w * 0.55:.1f},{y + h * 0.85:.1f} L{x + w * 0.8:.1f},{y + h * 0.68:.1f} L{x + w},{y + h} Z" fill="#06070a"/>')
+
+
+def _sketch_lamps(o, x, y, w, h):
+    c = [(0.15, 0.5, "#bf616a"), (0.4, 0.35, GO), (0.62, 0.62, AMBER), (0.85, 0.42, FROST)]
+    _pic(o, x, y, w, h, "".join(f'<circle cx="{x + w * a:.1f}" cy="{y + h * b:.1f}" r="{h * 0.17:.1f}" fill="{col}" fill-opacity=".4"/>' for a, b, col in c))
+
+
+def _sketch_stars(o, x, y, w, h):
+    rnd = random.Random(7)
+    _pic(o, x, y, w, h, "".join(f'<circle cx="{x + rnd.random() * w:.1f}" cy="{y + rnd.random() * h:.1f}" r=".8" fill="#c9ccc2" fill-opacity=".7"/>' for _ in range(24)))
+
+
+def _switch(o, x, y, on=True):
+    o.append(f'<rect x="{x}" y="{y}" width="38" height="22" rx="11" fill="{FROST if on else "#3a3f46"}" fill-opacity="{".8" if on else "1"}"/>')
+    o.append(f'<circle cx="{x + (27 if on else 11)}" cy="{y + 11}" r="8" fill="{WELL if on else DIM}"/>')
+
+
+def _star(o, cx, cy, on):
+    pts = " ".join(
+        f"{cx + (7 if k % 2 == 0 else 3) * math.sin(k * math.pi / 5):.1f},{cy - (7 if k % 2 == 0 else 3) * math.cos(k * math.pi / 5):.1f}"
+        for k in range(10))
+    o.append(f'<polygon points="{pts}" fill="{AMBER if on else "none"}" stroke="{AMBER if on else DIM}" stroke-width="1.3" stroke-linejoin="round"/>')
+
+
 def _hacks(o, spots, y):
-    o.append(tx(PAD, y + 12, "WEAR TEST", 10, DIM, 700, attrs='letter-spacing="1"'))
-    o.append(tx(PAD, y + 29, "60 min a hack, measured 14:02", 13, DIM))
-    w = len("Measure") * 7.2 + 22
-    _button(o, spots, "hacks:measure", PAD + IW - w, y + 4, "Measure")
-    y += 42
-    for name, about, avg, dwell, hot in HACK_ROWS:
-        lines = wrap(about, 11.5, IW - 22)
-        h = 10 + 18 + len(lines) * 15 + 34 + 6
-        o.append(f'<rect x="{PAD}" y="{y}" width="{IW}" height="{h}" rx="10" fill="{TILE}" stroke="{TILE_LINE}"/>')
-        x = PAD + 11
-        o.append(tx(x, y + 23, name, 13.5, FG, 700))
-        cw = len("in rotation") * 6.3 + 14
-        cx = PAD + IW - 11 - cw
-        o.append(f'<rect x="{cx:.1f}" y="{y + 11}" width="{cw:.1f}" height="17" rx="8.5" fill="{FROST}" fill-opacity=".13"/>')
-        o.append(tx(cx + cw / 2, y + 23.5, "in rotation", 10.5, FROST, 700, "middle"))
-        yy = y + 41
-        for line in lines:
-            o.append(tx(x, yy, line, 11.5, DIM))
-            yy += 15
-        o.append(tx(x, yy + 13, f"avg {avg} · dwell {dwell} · hottest {hot}", 11, FG))
-        pw = len("Preview") * 7.2 + 22
-        _button(o, spots, f"hacks:preview:{name}", PAD + IW - 11 - pw, yy - 4, "Preview")
-        o.append(tx(PAD + IW - 11 - pw - 10, yy + 13, "passes", 11, GO, 700, "end"))
-        y += h + 10
-    return y - 10
+    o.append(f'<rect x="{PAD}" y="{y}" width="{IW - 104}" height="30" rx="8" fill="{WELL}" stroke="{PANEL_LINE}"/>')
+    o.append(tx(PAD + 12, y + 20, "Find a hack", 12, DIM))
+    sx = PAD + IW - 96
+    o.append(f'<rect x="{sx}" y="{y}" width="96" height="30" rx="8" fill="{WELL}" stroke="{PANEL_LINE}"/>')
+    o.append(f'<rect x="{sx + 3}" y="{y + 3}" width="50" height="24" rx="6" fill="#33373d"/>')
+    o.append(tx(sx + 28, y + 19, "Strips", 11, FG, 700, "middle"))
+    o.append(tx(sx + 74, y + 19, "List", 11, DIM, 400, "middle"))
+    y += 40
+    cx = PAD
+    for i, chip in enumerate(["All 35", "In rotation 35", "Off 0", "Starred 1", "Fields"]):
+        cw = len(chip) * 6.6 + 18
+        on = i == 0
+        o.append(f'<rect x="{cx:.1f}" y="{y}" width="{cw:.1f}" height="20" rx="10" fill="{FROST if on else "none"}" fill-opacity="{".16" if on else "1"}" stroke="{FROST if on else TILE_LINE}" stroke-opacity="{".45" if on else "1"}"/>')
+        o.append(tx(cx + cw / 2, y + 14, chip, 11, FG if on else DIM, 400, "middle"))
+        cx += cw + 5
+    y += 30
+    o.append(tx(PAD, y + 17, "35 of 35 in rotation · 1 starred", 11, DIM))
+    aw = len("Audition") * 7.2 + 22
+    _button(o, spots, "hacks:audition", PAD + IW - aw, y, "Audition", primary=True)
+    mw = len("Measure") * 7.2 + 22
+    _button(o, spots, "hacks:measure", PAD + IW - aw - 6 - mw, y, "Measure")
+    y += 36
+    pw = IW - 12
+    ph = pw * 9 / 32
+    for name, kind, sketch, star in (("Night Mail", "Field", _sketch_mail, True),
+                                     ("Frost Aurora", "Field", _sketch_aurora, False),
+                                     ("Signal Lamps", "Field", _sketch_lamps, False)):
+        h = 6 + ph + 6 + 34
+        _card(o, y, h)
+        sketch(o, PAD + 6, y + 6, pw, ph)
+        ry = y + 6 + ph + 6
+        o.append(tx(PAD + 10, ry + 14, name, 13, FG, 700))
+        o.append(tx(PAD + 10, ry + 29, kind, 10.5, DIM))
+        o.append(tx(PAD + 10 + len(kind) * 6.4 + 6, ry + 29, "passes", 10.5, GO, 700))
+        _star(o, PAD + IW - 66, ry + 15, star)
+        _switch(o, PAD + IW - 48, ry + 4)
+        y += h + 8
+    return y - 8
 
 
 def _history(o, spots, y):
+    x = PAD + 11
+    h = 92
+    _card(o, y, h)
+    _label(o, x, y + 22, "TODAY")
+    o.append(tx(PAD + IW - 11, y + 22, "saver 32m · held 1h · dark 7h50m", 11, DIM, 400, "end"))
+    sw = IW - 22
+    o.append(f'<rect x="{x}" y="{y + 32}" width="{sw}" height="22" rx="5" fill="{FG}" fill-opacity=".05"/>')
+    for a, b, c, op in ((0, 0.326, WELL, 1), (0.326, 0.38, FG, 0.14), (0.38, 0.4, FROST, 1), (0.4, 0.43, FG, 0.14),
+                        (0.43, 0.47, AMBER, 1), (0.47, 0.555, FG, 0.14), (0.555, 0.567, FROST, 1), (0.567, 0.57, WELL, 1),
+                        (0.57, 0.602, FG, 0.14)):
+        o.append(f'<rect x="{x + sw * a:.1f}" y="{y + 32}" width="{sw * (b - a):.1f}" height="22" fill="{c}" fill-opacity="{op}"/>')
+    o.append(f'<rect x="{x + sw * 0.602:.1f}" y="{y + 32}" width="2" height="22" fill="{FG}"/>')
+    for i, hr in enumerate(["00", "06", "12", "18", "24"]):
+        o.append(tx(x + sw * i / 4, y + 68, hr, 10, DIM, 400, ["start", "middle", "middle", "middle", "end"][i]))
+    lx = x
+    for name, c, op in (("armed", FG, 0.3), ("saver", FROST, 1), ("held", AMBER, 1), ("dark", "#2a2e35", 1)):
+        o.append(f'<rect x="{lx}" y="{y + 76}" width="9" height="9" rx="2" fill="{c}" fill-opacity="{op}"/>')
+        o.append(tx(lx + 14, y + 85, name, 11, DIM))
+        lx += 14 + len(name) * 6.6 + 14
+    y += h + 10
     rows = len(HISTORY)
-    h = 12 + rows * 38 + 2
-    o.append(f'<rect x="{PAD}" y="{y}" width="{IW}" height="{h}" rx="10" fill="{TILE}" stroke="{TILE_LINE}"/>')
+    h = 12 + rows * 38 + 30
+    _card(o, y, h)
     yy = y + 24
     for t, what, why in HISTORY:
-        o.append(tx(PAD + 11, yy, t, 11, DIM))
-        o.append(tx(PAD + 11 + 74, yy, what, 12, FG, 700))
-        o.append(tx(PAD + 11 + 74, yy + 16, why, 11.5, DIM))
+        o.append(tx(x, yy, t, 11, DIM))
+        o.append(tx(x + 74, yy, what, 12, FG, 700))
+        o.append(tx(x + 74, yy + 16, why, 11.5, DIM))
+        if what == "Saver started":
+            fx = x + 74
+            for sketch in (_sketch_mail, _sketch_lamps):
+                sketch(o, fx, yy + 24, 48, 48 * 9 / 32)
+                fx += 51
+            yy += 30
         yy += 38
     return y + h
 
@@ -259,7 +389,7 @@ def draw_drawer(tab):
         o.append("</g>")
         end = BODY_MAX
     foot = end + 24
-    o.append(tx(PAD, foot, "1-3 tabs · n start now · h hold · r release · Esc close", 10.5, DIM))
+    o.append(tx(PAD, foot, "1-3 tabs · n start · h hold · + − longer/shorter · r release · Esc", 10.5, DIM))
     h = foot + 14
     head = [f'<rect width="{DRAWER_W}" height="{h}" rx="16" fill="{PANEL}" stroke="{PANEL_LINE}" filter="url(#shadow)"/>',
             g_moon(PAD + 8, 30, BAR_DIM, 1.1),
@@ -570,10 +700,12 @@ add(tx(x + 4 + 8 + GW + CW, MID, "35%", BAR_SIZE, FROST))
 # The lamps: Roundhouse's green dot, Switchyard's board, Waybill's ring,
 # Layover's moon (dim when armed, amber when held), the do-not-disturb bell.
 LAMP = 16 + GW
-lamps_w = 4 + 5 * LAMP + 4
+# Room beside the moon for the minutes left on a hold ("1h").
+COUNT_W = 2 * CW + 4
+lamps_w = 4 + 5 * LAMP + COUNT_W + 4
 lx = x - 6 - lamps_w
 pill(lx, lamps_w)
-cx = [lx + 4 + LAMP / 2 + i * LAMP for i in range(5)]
+cx = [lx + 4 + LAMP / 2 + i * LAMP + (COUNT_W if i == 4 else 0) for i in range(5)]
 add(f'<circle cx="{cx[0]}" cy="{CY}" r="5.5" fill="{GO}"/>')
 add(f'<rect x="{cx[1] - 5}" y="{CY - 9}" width="10" height="18" rx="4" fill="none" stroke="{FROST}" stroke-width="1.4"/>')
 for dy in (-5, 0, 5):
@@ -585,8 +717,9 @@ LAYOVER_X = cx[3]
 
 add(g_moon(LAYOVER_X, CY, BAR_DIM))
 group(fade([(HOLD + 0.35, RELEASE + 0.35)], 0.01, 0.01), False)
-add(f'<rect x="{LAYOVER_X - 9}" y="{CY - 10}" width="18" height="20" fill="{PILL}"/>')
+add(f'<rect x="{LAYOVER_X - 9}" y="{CY - 10}" width="{18 + COUNT_W}" height="20" fill="{PILL}"/>')
 add(g_moon(LAYOVER_X, CY, AMBER))
+add(tx(LAYOVER_X + 10, MID, "1h", BAR_SIZE, AMBER))
 add("</g>")
 add(g_bell(cx[4], CY, BAR_DIM))
 
@@ -607,7 +740,7 @@ tip_y = BAR_Y - 10 - tip_h
 group(fade([(HOLD + 0.8, RELEASE)], 0.12, 0.12), False)
 add(f'<rect x="{tip_x:.1f}" y="{tip_y}" width="{tip_w:.1f}" height="{tip_h}" rx="10" fill="{PANEL}" stroke="{PANEL_LINE}" filter="url(#shadow)"/>')
 for i, s in enumerate(TIP):
-    add(tx(tip_x + 12, tip_y + 25 + i * 19, s, 12, FG if i == 0 else DIM))
+    add(tx(tip_x + 12, tip_y + 25 + i * 19, s, 12, FG if i == 0 else DIM, 700 if i == 0 else 400))
 add("</g>")
 
 
