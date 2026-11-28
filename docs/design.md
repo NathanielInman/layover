@@ -180,7 +180,10 @@ Each frame:
    scale, limiter gain, white cap and fade.
 
 Hacks hand off with a fade through black. Text-heavy hacks declare it and use
-`care.text_rotate`.
+`care.text_rotate`. Image hacks (Tier I, once wired) read only from a
+user-configured picture folder and never capture the desktop
+(`ext-image-copy-capture` or `wlr-screencopy` are out of bounds); unconfigured
+or empty folders skip them from rotation.
 
 ### The Departure Board
 

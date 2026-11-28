@@ -42,7 +42,7 @@ below names what the renderer would gain to cover it.
 | L | lines and shapes: instanced quads with SDF edges | works today |
 | M | meshes: vertex buffers and a depth buffer | works today |
 | T | text: the glyph atlas the Departure Board already has | works today |
-| I | an image source: a screen grab or a picture folder | needs a decision |
+| I | an image source: a picture folder | engine task |
 | X | not ported (reason given) | |
 
 ## Rule one, applied to the catalog
@@ -119,9 +119,11 @@ Distort, Ripples, Decayscreen, Spotlight, Zoom, Twang, Slip, BlitSpin,
 Rotzoomer, FlipScreen3D, Jigsaw, GLSlideshow, Photopile, Tessellimage,
 Carousel, Esper, Bumps, AnalogTV.
 
-xscreensaver feeds these a grab of the desktop. On Wayland that is
-`ext-image-copy-capture` (or wlr-screencopy), and it puts whatever was open on
-the screen in front of anyone who walks past. A picture folder avoids that.
+xscreensaver feeds these a grab of the desktop (`ext-image-copy-capture` or
+`wlr-screencopy` on Wayland), which would show open windows to anyone walking
+past. Layover never grabs the desktop: Tier I hacks read only from a
+user-configured picture folder (disabled and skipped from rotation when
+unconfigured or empty), and still run through the care pass and wear test.
 
 ### Not ported (X)
 
