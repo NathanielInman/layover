@@ -495,6 +495,7 @@ impl Drawer {
         self.window.present();
         if !was_visible {
             bar_anchor::drawers::opened("layover");
+            crate::linux::tell_visible(true);
             self.spring.play_in(0);
         }
     }
@@ -503,6 +504,7 @@ impl Drawer {
         if !self.visible.replace(false) {
             return;
         }
+        crate::linux::tell_visible(false);
         let w = Rc::downgrade(self);
         self.spring.play_out(move || {
             if let Some(d) = w.upgrade()

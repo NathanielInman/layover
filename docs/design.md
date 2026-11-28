@@ -90,9 +90,8 @@ the worst case for a panel, and a hack under the care rules is not. A held
 station is checked again every 60 seconds while the desk stays idle.
 
 Streams come from `pactl -f json list sink-inputs` and `source-outputs`, the
-view sway-audio-idle-inhibit uses, run when a station is reached and, while a
-drawer is connected, every 30 seconds so its Now tab can say what holds the
-line. ALSA's
+view sway-audio-idle-inhibit uses, run when a station is reached and, while the
+drawer is open, every 30 seconds so its Now tab can say what holds the line. ALSA's
 status can't tell a device PipeWire holds open from one that is recording.
 
 ### The state machine
@@ -347,7 +346,9 @@ are a lamp `{"text","alt","class","tooltip"}` or `{"error"}`.
 `{"rows":[{"what","from","status","tone"}],"cheap":bool}` now and on every
 change.
 
-`board` keeps the connection open for the drawer: a snapshot first, any
+`board` keeps the connection open for the drawer, which writes
+`{"visible":true}` and `{"visible":false}` back on it as it opens and closes:
+a snapshot first, any
 show waiting for a drawer that was starting, then a line per event:
 `{"event":"snapshot","snapshot":{...}}` on every change, and
 `{"event":"toggle"|"show","anchor":A}` or `{"event":"hide"}`. The snapshot

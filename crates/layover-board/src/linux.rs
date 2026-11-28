@@ -70,12 +70,30 @@ fn watch(path: std::path::PathBuf, on_change: impl Fn() + 'static) {
     }
 }
 
+/// The subscription's socket, for telling the daemon when the drawer
+/// opens and closes.
+static BOARD: std::sync::Mutex<Option<std::os::unix::net::UnixStream>> =
+    std::sync::Mutex::new(None);
+
+/// Tells the daemon the drawer opened or closed, so it reads the holds
+/// only while someone looks.
+pub fn tell_visible(open: bool) {
+    if let Ok(mut b) = BOARD.lock()
+        && let Some(s) = b.as_mut()
+    {
+        let _ = writeln!(s, "{{\"visible\":{open}}}");
+    }
+}
+
 /// Keeps a subscription to the daemon open, reconnecting forever.
 fn connection(tx: async_channel::Sender<Msg>) {
     loop {
         if let Ok(mut s) = std::os::unix::net::UnixStream::connect(paths::socket())
             && writeln!(s, "{{\"cmd\":\"board\"}}").is_ok()
         {
+            if let (Ok(mut b), Ok(w)) = (BOARD.lock(), s.try_clone()) {
+                *b = Some(w);
+            }
             for line in BufReader::new(s).lines() {
                 let Ok(line) = line else { break };
                 match serde_json::from_str::<BoardEvent>(&line) {

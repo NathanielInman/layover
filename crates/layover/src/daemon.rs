@@ -36,6 +36,8 @@ pub enum Msg {
     Board(u64, Sender<String>),
     /// A drawer's socket closed.
     BoardGone(u64),
+    /// A drawer opened (true) or closed (false).
+    BoardVisible(u64, bool),
     SaverExited {
         pid: u32,
         status: String,
@@ -84,6 +86,8 @@ struct Daemon {
     run: Vec<&'static layover_hacks::Hack>,
     /// When the holds were last read for an open drawer.
     holds_read: Option<Instant>,
+    /// Drawers that are open on screen: the holds are read only for them.
+    boards_open: std::collections::HashSet<u64>,
     /// What each tool's lamp says, and all of it put together.
     readings: BTreeMap<Feed, Reading>,
     desk: Desk,
@@ -160,6 +164,7 @@ pub fn run(cfg: Config) -> Result<()> {
         pinned: None,
         run: Vec::new(),
         holds_read: None,
+        boards_open: Default::default(),
         readings: BTreeMap::new(),
         desk: Desk::default(),
         line_watchers: Vec::new(),
@@ -185,7 +190,7 @@ impl Daemon {
             if Instant::now() >= next_tick {
                 next_tick = Instant::now() + TICK;
                 self.step(Event::Tick);
-                if !self.boards.is_empty()
+                if !self.boards_open.is_empty()
                     && self.holds_read.is_none_or(|t| t.elapsed() >= HOLDS_EVERY)
                 {
                     self.refresh_holds();
@@ -278,7 +283,18 @@ impl Daemon {
                     self.boards.push((id, sender));
                 }
             }
-            Msg::BoardGone(id) => self.boards.retain(|(b, _)| *b != id),
+            Msg::BoardGone(id) => {
+                self.boards.retain(|(b, _)| *b != id);
+                self.boards_open.remove(&id);
+            }
+            Msg::BoardVisible(id, open) => {
+                if open {
+                    self.boards_open.insert(id);
+                    self.refresh_holds();
+                } else {
+                    self.boards_open.remove(&id);
+                }
+            }
             Msg::Feed(feed, lamp) => {
                 match lamp {
                     Some(l) => {
@@ -759,11 +775,19 @@ fn serve_client(stream: UnixStream, tx: Sender<Msg>) -> Result<()> {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                 let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 tx.send(Msg::Board(id, wtx))?;
-                let mut probe = writer.try_clone()?;
+                // The drawer says when it opens and closes on the same
+                // socket: `{"visible":true}`.
+                let probe = BufReader::new(writer.try_clone()?);
                 let gone = tx.clone();
                 std::thread::spawn(move || {
-                    let mut buf = [0u8; 256];
-                    while matches!(probe.read(&mut buf), Ok(n) if n > 0) {}
+                    for line in probe.lines() {
+                        let Ok(line) = line else { break };
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line)
+                            && let Some(open) = v.get("visible").and_then(|o| o.as_bool())
+                        {
+                            let _ = gone.send(Msg::BoardVisible(id, open));
+                        }
+                    }
                     let _ = gone.send(Msg::BoardGone(id));
                 });
             }
