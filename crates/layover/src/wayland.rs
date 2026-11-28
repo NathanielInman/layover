@@ -190,9 +190,14 @@ impl Dispatch<ext_idle_notification_v1::ExtIdleNotificationV1, Probe> for WlStat
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let ext_idle_notification_v1::Event::Idled = event {
-            let _ = state.tx.send(Msg::IdleProbe);
-        }
+        // The probe is the only notification that resumes after a short
+        // idle: the stations only resume after they fired.
+        let msg = match event {
+            ext_idle_notification_v1::Event::Idled => Msg::IdleProbe,
+            ext_idle_notification_v1::Event::Resumed => Msg::Resumed,
+            _ => return,
+        };
+        let _ = state.tx.send(msg);
     }
 }
 

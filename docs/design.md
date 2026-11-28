@@ -64,7 +64,8 @@ can no longer be filtered, and every inhibitor holds the line.
 A 10 second idle probe beside the stations tells the daemon when the last
 input was, so the drawer's rail and the lamp can count down to the saver.
 It only marks the time; the stations still come from their own
-notifications.
+notifications. Its resume is also the one that comes after a short idle,
+since a station's notification only resumes after it fired.
 
 Output power uses `zwlr_output_power_manager_v1`. Without it the daemon runs
 `line.dark_command` and `line.wake_command` when set, and otherwise logs that

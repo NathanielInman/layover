@@ -930,6 +930,16 @@ mod tests {
     }
 
     #[test]
+    fn input_after_a_short_idle_stops_the_count_and_changes_nothing_else() {
+        let mut m = model("");
+        m.step(0, Event::Hold { secs: 3600 });
+        m.step(10, Event::Idle { since: 0 });
+        assert!(m.step(300, Event::Resumed).is_empty());
+        assert_eq!(m.idle_secs(), 0);
+        assert_eq!(m.lamp().class, "held", "input doesn't end your hold");
+    }
+
+    #[test]
     fn a_reached_station_tells_how_long_the_desk_was_idle() {
         let mut m = model("");
         m.step(1000, Event::Hold { secs: 3600 });
