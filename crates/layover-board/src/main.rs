@@ -18,6 +18,8 @@ mod hacks;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+mod rail;
+#[cfg(target_os = "linux")]
 mod stage;
 #[cfg(target_os = "linux")]
 mod theme;

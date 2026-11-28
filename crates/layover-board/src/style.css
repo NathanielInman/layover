@@ -228,3 +228,26 @@ button.star:checked { color: @lo_held; background: transparent; }
 .meter levelbar block.filled { background: @lo_ok; }
 .meter levelbar.over block.filled { background: @lo_bad; }
 .meter levelbar block.empty { background: transparent; }
+
+/* ---- the now tab ---- */
+.aside { font-size: 12px; }
+.rail { color: @lo_fg; }
+.rail-accent { color: @lo_accent; }
+.rail-accent.held { color: @lo_held; }
+.hold-dot { font-size: 9px; margin-top: 3px; }
+.hold-dot.mine { color: @lo_held; }
+.hold-dot.theirs { color: @lo_accent; }
+.hold-what { font-size: 12px; }
+.hold-chips button {
+  background: @lo_tile;
+  border: 1px solid @lo_tile_border;
+  border-radius: 8px;
+  box-shadow: none;
+  color: @lo_fg;
+  min-height: 0;
+  padding: 5px 0;
+  font-size: 11.5px;
+}
+.hold-chips button:hover { background: alpha(@lo_held, 0.15); color: @lo_held; }
+.later { opacity: 0.7; }
+.next-name { font-size: 12px; font-weight: bold; }

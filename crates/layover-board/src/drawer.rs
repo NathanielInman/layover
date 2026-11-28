@@ -224,7 +224,7 @@ impl Drawer {
         scroll.set_child(Some(&content));
 
         let foot = label(
-            "1-3 tabs \u{b7} n start now \u{b7} h hold \u{b7} r release \u{b7} Esc close",
+            "1-3 tabs \u{b7} n start \u{b7} h hold \u{b7} + \u{2212} longer/shorter \u{b7} r release \u{b7} Esc",
             &["foot"],
         );
         let panel = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -404,6 +404,10 @@ impl Drawer {
             gdk::Key::_3 => self.set_tab(Tab::History),
             gdk::Key::n => self.start_now(),
             gdk::Key::h => self.send(Request::Hold { secs: 3600 }),
+            gdk::Key::plus | gdk::Key::equal | gdk::Key::KP_Add => {
+                self.send(Request::Extend { secs: 900 })
+            }
+            gdk::Key::minus | gdk::Key::KP_Subtract => self.send(Request::Extend { secs: -900 }),
             gdk::Key::r => self.send(Request::Release),
             _ => return glib::Propagation::Proceed,
         }
@@ -411,7 +415,7 @@ impl Drawer {
     }
 
     /// The saver needs the screen: close the drawer first.
-    fn start_now(self: &Rc<Self>) {
+    pub(crate) fn start_now(self: &Rc<Self>) {
         self.hide();
         self.send(Request::Now);
     }
@@ -474,6 +478,14 @@ impl Drawer {
             }
         }
         self.render_notice();
+        // Each tab redraws only for what it shows: the gallery must not
+        // jump each minute the idle count moves.
+        let shown = match self.tab.get() {
+            Tab::Hacks => serde_json::to_string(&(&snap.hacks, &snap.hack, snap.up_next.first()))
+                .unwrap_or_default(),
+            Tab::History => serde_json::to_string(&snap.history).unwrap_or_default(),
+            Tab::Now => serde_json::to_string(&snap).unwrap_or_default(),
+        };
         let key = format!(
             "{:?}|{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
             self.tab.get(),
@@ -484,7 +496,7 @@ impl Drawer {
             self.wear.borrow().as_ref().map(|w| w.measured_at),
             self.measuring.get(),
             self.thumbs_gen.get(),
-            serde_json::to_string(&snap).unwrap_or_default(),
+            shown,
         );
         if *self.rendered.borrow() == key {
             return;
@@ -508,7 +520,19 @@ impl Drawer {
         card.add_css_class("card");
         card.add_css_class(&s.state);
         card.append(&label("THE IDLE LINE", &["t-label"]));
-        card.append(&label(&s.headline, &["big", &s.state]));
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        head.append(&label(&s.headline, &["big", &s.state]));
+        let aside = match (s.hold_mins, s.state.as_str()) {
+            (Some(m), _) => format!("for {}", mins(m)),
+            (None, "armed" | "loose") if s.idle_mins > 0 => format!("idle {}", mins(s.idle_mins)),
+            _ => String::new(),
+        };
+        if !aside.is_empty() {
+            let a = label(&aside, &["dim", "aside"]);
+            a.set_valign(gtk::Align::Baseline);
+            head.append(&a);
+        }
+        card.append(&head);
         card.append(&wrapped(&s.reason, &["reason"]));
         if let Some(why) = &s.cheap {
             card.append(&wrapped(
@@ -521,52 +545,24 @@ impl Drawer {
         if let Some(h) = &s.hack {
             card.append(&label(&format!("Showing {h}"), &["showing"]));
         }
-
-        let grid = gtk::Grid::new();
-        grid.set_column_spacing(6);
-        grid.set_row_spacing(6);
-        grid.set_column_homogeneous(true);
-        for (i, st) in s.stations.iter().enumerate() {
-            let b = gtk::Box::new(gtk::Orientation::Vertical, 2);
-            b.add_css_class("station");
-            if !st.on {
-                b.add_css_class("off");
-            }
-            b.append(&label(&st.name.to_uppercase(), &["name"]));
-            b.append(&label(&st.at, &["at"]));
-            grid.attach(&b, (i % 2) as i32, (i / 2) as i32, 1, 1);
+        let counting = matches!(s.state.as_str(), "armed" | "loose" | "saver");
+        let rail = crate::rail::Rail::new(&s.rail, s.idle_mins, counting, s.state == "held");
+        rail.set_margin_top(6);
+        card.append(&rail);
+        if s.stations.iter().any(|st| st.name == "Lock screen off" && st.on) {
+            let still =
+                s.stations.iter().find(|st| st.name == "Lock screen off").map(|st| st.at.clone());
+            card.append(&label(
+                &format!("A still lock screen goes dark after {}.", still.unwrap_or_default()),
+                &["dim", "small"],
+            ));
         }
-        card.append(&grid);
-
-        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        buttons.add_css_class("buttons");
-        buttons.set_margin_top(4);
-        let start = gtk::Button::with_label("Start saver now");
-        start.add_css_class("primary");
-        start.set_sensitive(!matches!(s.state.as_str(), "saver" | "dark" | "off") && !s.locked);
-        let w = Rc::downgrade(self);
-        start.connect_clicked(move |_| {
-            if let Some(d) = w.upgrade() {
-                d.start_now();
-            }
-        });
-        buttons.append(&start);
-        let (text, req) = if s.manual_hold {
-            ("Release", Request::Release)
-        } else {
-            ("Hold 1h", Request::Hold { secs: 3600 })
-        };
-        let hold = gtk::Button::with_label(text);
-        hold.set_sensitive(s.state != "off");
-        let w = Rc::downgrade(self);
-        hold.connect_clicked(move |_| {
-            if let Some(d) = w.upgrade() {
-                d.send(req.clone());
-            }
-        });
-        buttons.append(&hold);
-        card.append(&buttons);
         self.content.append(&card);
+
+        self.content.append(&self.holds_card(s));
+        if !s.up_next.is_empty() {
+            self.content.append(&self.next_card(s));
+        }
 
         if !s.loosened.is_empty() {
             let loose = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -582,6 +578,124 @@ impl Drawer {
             }
             self.content.append(&loose);
         }
+    }
+
+    fn holds_card(self: &Rc<Self>, s: &Snapshot) -> gtk::Box {
+        let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        card.add_css_class("card");
+        card.append(&label("WHAT HOLDS THE LINE", &["t-label"]));
+        if s.holding.is_empty() {
+            card.append(&label("Nothing holds it.", &["dim", "small"]));
+        }
+        for h in &s.holding {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            let dot = label("\u{25cf}", &["hold-dot", if h.mine { "mine" } else { "theirs" }]);
+            dot.set_valign(gtk::Align::Start);
+            row.append(&dot);
+            let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+            text.set_hexpand(true);
+            text.append(&wrapped(&h.what, &["hold-what"]));
+            text.append(&wrapped(&h.effect, &["why"]));
+            row.append(&text);
+            if h.mine {
+                let b = gtk::Button::with_label("Release");
+                b.set_valign(gtk::Align::Center);
+                let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                buttons.add_css_class("buttons");
+                let w = Rc::downgrade(self);
+                b.connect_clicked(move |_| {
+                    if let Some(d) = w.upgrade() {
+                        d.send(Request::Release);
+                    }
+                });
+                buttons.append(&b);
+                row.append(&buttons);
+            }
+            card.append(&row);
+        }
+        card.append(&label(
+            if s.hold_mins.is_some() {
+                "Hold everything for, from now"
+            } else {
+                "Hold everything for"
+            },
+            &["dim", "small"],
+        ));
+        let chips = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        chips.set_homogeneous(true);
+        chips.add_css_class("hold-chips");
+        for (text, secs) in [("30m", 1800), ("1h", 3600), ("2h", 7200), ("4h", 14400)] {
+            let b = gtk::Button::with_label(text);
+            b.set_focus_on_click(false);
+            b.set_sensitive(s.state != "off");
+            let w = Rc::downgrade(self);
+            b.connect_clicked(move |_| {
+                if let Some(d) = w.upgrade() {
+                    d.send(Request::Hold { secs });
+                }
+            });
+            chips.append(&b);
+        }
+        card.append(&chips);
+        card
+    }
+
+    fn next_card(self: &Rc<Self>, s: &Snapshot) -> gtk::Box {
+        let card = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        card.add_css_class("card");
+        card.append(&label("UP NEXT", &["t-label"]));
+        let strip = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let width = self.cfg.borrow().drawer.width - 28.0 - 24.0;
+        let aspect = self.thumbs.borrow().aspect();
+        let small = (width - 18.0) / 5.0;
+        for (i, id) in s.up_next.iter().take(4).enumerate() {
+            let w = if i == 0 { small * 2.0 } else { small };
+            let b = gtk::Box::new(gtk::Orientation::Vertical, 3);
+            b.set_size_request(w as i32, -1);
+            let pic = crate::thumbs::picture(&self.thumbs, id, (w * aspect).round() as i32, false);
+            if i > 0 {
+                pic.add_css_class("later");
+            }
+            b.append(&pic);
+            let name =
+                s.hacks.iter().find(|h| &h.id == id).map(|h| h.name.clone()).unwrap_or_default();
+            let n = label(&name, &[if i == 0 { "next-name" } else { "kind" }]);
+            n.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            n.set_max_width_chars(1);
+            n.set_hexpand(true);
+            b.append(&n);
+            strip.append(&b);
+        }
+        card.append(&strip);
+        card.append(&wrapped(
+            "Each hands off after its turn (text sooner), then the screens go dark.",
+            &["dim", "small"],
+        ));
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        buttons.add_css_class("buttons");
+        let start = gtk::Button::with_label("Start saver now");
+        start.add_css_class("primary");
+        start.set_hexpand(true);
+        start.set_sensitive(!matches!(s.state.as_str(), "saver" | "dark" | "off") && !s.locked);
+        let w = Rc::downgrade(self);
+        start.connect_clicked(move |_| {
+            if let Some(d) = w.upgrade() {
+                d.start_now();
+            }
+        });
+        buttons.append(&start);
+        let skip = gtk::Button::with_label("Skip");
+        skip.set_tooltip_text(Some("Start the next run with the hack after this one"));
+        skip.set_sensitive(s.state != "off");
+        let w = Rc::downgrade(self);
+        skip.connect_clicked(move |_| {
+            if let Some(d) = w.upgrade() {
+                d.send(Request::Next { hack: None });
+            }
+        });
+        buttons.append(&skip);
+        card.append(&buttons);
+        card
     }
 
     fn render_history(self: &Rc<Self>, s: &Snapshot) {
@@ -723,6 +837,15 @@ impl Drawer {
                 glib::ControlFlow::Break
             });
         });
+    }
+}
+
+/// Minutes as the lamp writes them: "9m", "1h", "1h15m".
+pub(crate) fn mins(m: u64) -> String {
+    match (m / 60, m % 60) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h{m}m"),
     }
 }
 

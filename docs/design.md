@@ -342,9 +342,14 @@ then `~/.config/layover/style.css` on top.
 Three tabs:
 
 - **Now**: the state in large type in its color (dim armed, amber held,
-  frost saver), the reason, the idle line as configured (saver, lock, screens
-  off, lock screen off; an off station says off), Start saver now and Hold 1h
-  or Release, and every value looser than shipped with its reason.
+  frost saver) with how long the desk has been idle or the hold has left,
+  the reason, and the rail: the idle line drawn to scale from the last
+  input to the dark, a mark at the idle minutes, and under each station its
+  time and how long until it comes (or held). Then what holds the line now,
+  each with what it stops and Release on your own hold, and Hold everything
+  for 30m, 1h, 2h or 4h. Up next shows the next four hacks of the run with
+  Start saver now and Skip. Every value looser than shipped follows with its
+  reason.
 - **Hacks**: a gallery of every hack. Each shows its picture from
   `layover thumbs` (its 4 second loop plays under the pointer), its family
   (Fields, 3D, Growth, Particles, Lines or Text, from what the renderer gives
@@ -356,7 +361,8 @@ Three tabs:
   pictures fill in as each hack is drawn. A click on a hack opens its sheet:
   the loop playing, frames at 0:30 and 2:30, what it looks like and whom it
   follows, Never, Sometimes or Often with how often that comes up, Preview
-  (closes the drawer and runs `layover saver --hack <id> --for 20s`), and its
+  (closes the drawer and runs `layover saver --hack <id> --for 20s`), Play it
+  next time (`layover next <id>`), and its
   wear numbers as bars against your budget with the heat map. Arrows step
   through sheets, `p` previews and Escape goes back to the gallery.
 - **History**: the last 50 transitions, newest first, each with its local
@@ -365,7 +371,8 @@ Three tabs:
   and releases.
 
 Keys: `1` to `3` pick a tab, `n` starts the saver, `h` holds for an hour,
-`r` releases, Escape closes.
+`+` and `-` lengthen or shorten a hold by 15 minutes, `r` releases, `/`
+finds a hack, Escape closes (or leaves a sheet).
 
 ### The lamp
 

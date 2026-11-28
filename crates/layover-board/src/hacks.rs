@@ -364,8 +364,15 @@ impl Drawer {
         let overlay = gtk::Overlay::new();
         let pic = thumbs::picture(&self.thumbs, &h.id, self.picture_height(width), false);
         overlay.set_child(Some(&pic));
-        if s.hack.as_deref() == Some(h.name.as_str()) {
-            let badge = label("ON SCREEN", &["badge"]);
+        let badge = if s.hack.as_deref() == Some(h.name.as_str()) {
+            Some("ON SCREEN")
+        } else if s.up_next.first() == Some(&h.id) {
+            Some("UP NEXT")
+        } else {
+            None
+        };
+        if let Some(text) = badge {
+            let badge = label(text, &["badge"]);
             badge.set_halign(gtk::Align::Start);
             badge.set_valign(gtk::Align::Start);
             overlay.add_overlay(&badge);
@@ -573,6 +580,17 @@ impl Drawer {
             }
         });
         buttons.append(&preview);
+        let next = s.up_next.first() == Some(&h.id);
+        let pin = gtk::Button::with_label(if next { "Plays next" } else { "Play it next time" });
+        pin.set_sensitive(!next);
+        pin.set_tooltip_text(Some("Start the next run of the saver with this hack"));
+        let (w, id) = (Rc::downgrade(self), h.id.clone());
+        pin.connect_clicked(move |_| {
+            if let Some(d) = w.upgrade() {
+                d.send(Request::Next { hack: Some(id.clone()) });
+            }
+        });
+        buttons.append(&pin);
         card.append(&buttons);
         card
     }
