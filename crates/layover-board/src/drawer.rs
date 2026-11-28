@@ -542,6 +542,7 @@ impl Drawer {
             }
         }
         self.render_notice();
+        self.ensure_thumbs(&snap);
         // Each tab redraws only for what it shows: the gallery must not
         // jump each minute the idle count moves.
         let shown = match self.tab.get() {

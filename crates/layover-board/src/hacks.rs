@@ -71,7 +71,6 @@ impl Drawer {
     }
 
     pub(crate) fn render_hacks(self: &Rc<Self>, s: &Snapshot) {
-        self.ensure_thumbs(s);
         let open = self.sheet.borrow().clone();
         if let Some(id) = open
             && let Some(i) = s.hacks.iter().position(|h| h.id == id)
@@ -91,7 +90,7 @@ impl Drawer {
 
     /// Draws thumbnails that are missing or stale, once per drawer start,
     /// in the background and at low priority.
-    fn ensure_thumbs(self: &Rc<Self>, s: &Snapshot) {
+    pub(crate) fn ensure_thumbs(self: &Rc<Self>, s: &Snapshot) {
         if self.thumbs_started.get() || self.shooting.get() || s.hacks.is_empty() {
             return;
         }
